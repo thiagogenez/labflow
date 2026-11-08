@@ -93,13 +93,13 @@ Historical prepublication scans covered an earlier set of files. Re-scan all cur
 
 ## README illustrations
 
-The README displays the animated GIF directly and links to a static PNG. The receipt, aggregation chip and result sheet illustrate the current local calculation. Values come from `generate_sales(seed=42, rows=3)` and `summarize_sales`; animation timing is illustrative, not measured execution. Regenerate both assets with:
+The README displays the animated GIF directly at a maximum width of 720 pixels and links to a static PNG. The 840×320 illustration previews the **planned** Kafka/worker path: three distinct colored jobs, three worker pods, compact results, a result consumer and PostgreSQL. Jobs and results are topics in one Kafka cluster. This is an illustrative topology and schedule, not a runtime trace; the initial deployment will start with one worker. Regenerate both assets with:
 
 ```bash
 .venv/bin/python .github/scripts/render_readme_assets.py
 ```
 
-Pillow is a hash-pinned development dependency, separate from application runtime dependencies. The generator draws the wave motif locally; the illustration requires no external image API or downloaded fonts. Font availability can change rasterization between machines. Review the opening, processing and completed frames, check readability at narrow widths, and keep the static alternative and descriptive alt text. GIF playback does not automatically follow reduced-motion preferences.
+Pillow is a hash-pinned development dependency, separate from application runtime dependencies. The generator draws the illustration locally, without an external image API or downloaded fonts. Font availability can change rasterization between machines. Check that jobs enter distinct workers, workers return results through Kafka, and only the result consumer writes to PostgreSQL. Review opening, concurrent-processing, result-delivery and completed frames at desktop and narrow widths. Keep the static alternative and descriptive alt text; GIF playback does not automatically follow reduced-motion preferences.
 
 The **How it works** section distinguishes the running Python core from the planned distributed system. Its Mermaid diagram remains editable in the README. Keep both the architecture labels and numbered explanation consistent with [the plan](plan.md).
 

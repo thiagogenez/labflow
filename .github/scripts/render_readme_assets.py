@@ -1,26 +1,22 @@
-"""Render the illustrative local-calculation flow used in the README."""
+"""Render the planned Kafka/worker flow as compact README illustrations."""
 
 from dataclasses import dataclass
 from functools import cache
-from math import pi, sin
+from itertools import pairwise
+from math import hypot
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from labflow.reporting import summarize_sales
-from labflow.synthetic import GENERATOR_VERSION, generate_sales
-
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / "docs" / "assets"
-SIZE = (720, 600)
+SIZE = (840, 320)
 BACKGROUND = "#0b1821"
 SURFACE = "#132631"
 TEXT = "#eef5f5"
 MUTED = "#a6bbc5"
 ACCENT = "#65dec2"
 LINE = "#304853"
-SALES = generate_sales(seed=42, rows=3)
-REPORT = summarize_sales(SALES)
 
 
 @dataclass(frozen=True)
@@ -29,7 +25,23 @@ class TextStyle:
 
     size: int
     color: str = TEXT
-    max_width: int = 656
+    max_width: int = 792
+
+
+@dataclass(frozen=True)
+class WorkerLane:
+    """One distinct example job, its assigned worker and its result color."""
+
+    number: int
+    center_y: int
+    color: str
+
+
+WORKERS = (
+    WorkerLane(1, 126, ACCENT),
+    WorkerLane(2, 182, "#83baf4"),
+    WorkerLane(3, 238, "#f0c477"),
+)
 
 
 @cache
@@ -58,125 +70,135 @@ def text(
     draw.text(xy, value, font=face, fill=style.color, anchor="lt")
 
 
-def heading(draw: ImageDraw.ImageDraw, progress: float) -> None:
-    """Draw the title and a quiet wave motif without a hosted asset."""
-    for offset, color in ((0, "#173541"), (14, "#204b52"), (28, "#285b5c")):
-        points = [
-            (x, 145 + offset + round(10 * sin(x / 90 + progress * 2 * pi)))
-            for x in range(430, 721, 3)
-        ]
-        draw.line(points, fill=color, width=2)
-    text(draw, (32, 28), "LABFLOW  /  THE REPORTING CORE", TextStyle(15, ACCENT))
-    text(draw, (32, 65), "Same seed. Same sales.", TextStyle(38))
-    text(
-        draw, (32, 116), "Follow the data from input to summary.", TextStyle(22, MUTED)
+def connection(draw: ImageDraw.ImageDraw, path: tuple[tuple[int, int], ...]) -> None:
+    """Draw a route ending with a right-pointing arrow."""
+    draw.line(path, fill=LINE, width=2)
+    x, y = path[-1]
+    draw.polygon(((x - 6, y - 4), (x, y), (x - 6, y + 4)), fill=MUTED)
+
+
+def point_on_path(
+    path: tuple[tuple[int, int], ...], fraction: float
+) -> tuple[int, int]:
+    """Interpolate along a routed connection at a constant visual speed."""
+    lengths = [hypot(b[0] - a[0], b[1] - a[1]) for a, b in pairwise(path)]
+    distance = max(0.0, min(fraction, 1.0)) * sum(lengths)
+    for (start, end), length in zip(pairwise(path), lengths):
+        if length and distance <= length:
+            ratio = distance / length
+            return (
+                round(start[0] + ratio * (end[0] - start[0])),
+                round(start[1] + ratio * (end[1] - start[1])),
+            )
+        distance -= length
+    return path[-1]
+
+
+def packet(
+    draw: ImageDraw.ImageDraw,
+    path: tuple[tuple[int, int], ...],
+    fraction: float,
+    lane: WorkerLane,
+    *,
+    compact: bool = False,
+) -> None:
+    """Keep each job's color through computation and compact result delivery."""
+    x, y = point_on_path(path, fraction)
+    radius = 5 if compact else 8
+    draw.rounded_rectangle(
+        (x - radius, y - radius, x + radius, y + radius), radius=3, fill=lane.color
     )
-    draw.rounded_rectangle((32, 158, 385, 194), radius=8, fill=SURFACE)
+
+
+def infrastructure(draw: ImageDraw.ImageDraw) -> None:
+    """Show topics, the result consumer and the authoritative database."""
+    text(draw, (24, 22), "Planned worker flow", TextStyle(28))
+    text(draw, (646, 30), "KUBERNETES", TextStyle(18, MUTED, 170))
+    text(draw, (24, 91), "Kafka", TextStyle(22, MUTED, 104))
+    draw.rounded_rectangle((24, 128, 128, 249), radius=8, fill=SURFACE, outline=LINE)
+    text(draw, (40, 140), "jobs", TextStyle(24, TEXT, 78))
+    for lane in WORKERS:
+        top = 174 + (lane.number - 1) * 24
+        draw.rounded_rectangle((36, top - 7, 116, top + 12), radius=4, outline=LINE)
+        text(draw, (44, top - 5), f"p{lane.number - 1}", TextStyle(15, lane.color, 60))
+
+    text(draw, (224, 65), "Worker pods", TextStyle(22, TEXT, 154))
+    text(draw, (224, 92), "generate + compute", TextStyle(16, MUTED, 154))
+    text(draw, (462, 117), "Kafka", TextStyle(22, MUTED, 104))
+    draw.rounded_rectangle((462, 153, 566, 211), radius=8, fill=SURFACE, outline=LINE)
+    text(draw, (472, 170), "results", TextStyle(23, TEXT, 84))
+
+    draw.rounded_rectangle((616, 153, 706, 211), radius=8, fill=SURFACE, outline=LINE)
+    text(draw, (631, 162), "Result", TextStyle(20, TEXT, 66))
+    text(draw, (626, 188), "consumer", TextStyle(16, MUTED, 74))
+    connection(draw, ((566, 182), (616, 182)))
+    connection(draw, ((706, 182), (754, 182)))
+
+    text(draw, (718, 117), "PostgreSQL", TextStyle(19, MUTED, 106))
+    draw.rectangle((754, 162, 818, 204), fill=SURFACE, outline=LINE)
+    draw.ellipse((754, 194, 818, 214), fill=SURFACE, outline=LINE)
+    draw.ellipse((754, 152, 818, 172), fill=SURFACE, outline=LINE)
+    text(draw, (724, 230), "official state", TextStyle(16, MUTED, 100))
     text(
         draw,
-        (46, 167),
-        f"seed=42   rows=3   {GENERATOR_VERSION}",
-        TextStyle(20, ACCENT, 325),
+        (24, 286),
+        "3 example jobs / partitions · one consumer group · compact results",
+        TextStyle(20, MUTED),
     )
 
 
-def sales_sheet(draw: ImageDraw.ImageDraw, progress: float) -> None:
-    """Illustrate the three actual sample records as an itemized receipt."""
-    text(draw, (32, 227), "01 / GENERATE", TextStyle(16, MUTED, 292))
-    draw.rounded_rectangle((32, 260, 324, 463), radius=10, fill=SURFACE, outline=LINE)
-    for x in range(33, 317, 16):
-        draw.polygon(((x, 464), (x + 8, 454), (x + 16, 464)), fill=BACKGROUND)
-    for x, label in ((48, "Qty"), (108, "Price"), (222, "Total")):
-        text(draw, (x, 279), label, TextStyle(18, MUTED, 85))
-    draw.line((48, 309, 308, 309), fill=LINE, width=1)
-    for index, sale in enumerate(SALES):
-        top = 322 + index * 42
-        selected = 0.12 + index * 0.18 <= progress < 0.30 + index * 0.18
-        if selected:
-            draw.rounded_rectangle(
-                (41, top - 5, 315, top + 28), radius=5, fill="#234638"
-            )
-        values = (
-            str(sale.quantity),
-            f"{sale.unit_price_cents:,}",
-            f"{sale.total_cents:,}",
+def worker(draw: ImageDraw.ImageDraw, lane: WorkerLane, progress: float) -> None:
+    """Illustrate a distinct job entering, computing and leaving one worker."""
+    phase = progress * 1.2 - (lane.number - 1) * 0.12
+    source_y = 174 + (lane.number - 1) * 24
+    incoming = (
+        (128, source_y),
+        (174, source_y),
+        (174, lane.center_y),
+        (224, lane.center_y),
+    )
+    outgoing = ((378, lane.center_y), (418, lane.center_y), (418, 182), (462, 182))
+    connection(draw, incoming)
+    connection(draw, outgoing)
+    active = 0.18 <= phase < 0.54
+    draw.rounded_rectangle(
+        (224, lane.center_y - 17, 378, lane.center_y + 17),
+        radius=7,
+        fill="#203c45" if active else SURFACE,
+        outline=lane.color,
+    )
+    draw.ellipse((235, lane.center_y - 4, 243, lane.center_y + 4), fill=lane.color)
+    text(
+        draw,
+        (254, lane.center_y - 10),
+        f"Worker {lane.number}",
+        TextStyle(21, TEXT, 116),
+    )
+    if active:
+        end = 226 + round((phase - 0.18) / 0.36 * 149)
+        draw.line(
+            (226, lane.center_y + 16, end, lane.center_y + 16), fill=lane.color, width=2
         )
-        for x, value in zip((48, 108, 222), values):
-            text(draw, (x, top), value, TextStyle(22, ACCENT if selected else TEXT, 86))
-    text(draw, (48, 436), "Prices and totals in cents", TextStyle(15, MUTED, 260))
-
-
-def processor(draw: ImageDraw.ImageDraw, progress: float) -> None:
-    """Move one illustrated record at a time through the aggregation chip."""
-    text(draw, (346, 227), "02 / SUM", TextStyle(16, MUTED, 110))
-    working = 0.12 <= progress < 0.72
-    color = ACCENT if working else LINE
-    for position in range(338, 381, 14):
-        draw.line((357, position, 369, position), fill=color, width=2)
-        draw.line((427, position, 439, position), fill=color, width=2)
-    for position in range(377, 420, 14):
-        draw.line((position, 318, position, 330), fill=color, width=2)
-        draw.line((position, 388, position, 400), fill=color, width=2)
-    draw.rounded_rectangle(
-        (369, 330, 427, 388), radius=8, fill=SURFACE, outline=color, width=2
-    )
-    text(draw, (382, 339), "Σ", TextStyle(34, ACCENT, 38))
-    for start, end in ((325, 356), (440, 470)):
-        draw.line((start, 359, end, 359), fill=LINE, width=2)
-        draw.polygon(((end - 5, 354), (end, 359), (end - 5, 364)), fill=MUTED)
-    if working:
-        position = round(325 + ((progress - 0.12) / 0.18 % 1) * 145)
-        if position < 357 or position > 439:
-            draw.ellipse((position - 4, 355, position + 4, 363), fill=ACCENT)
-
-
-def report_sheet(draw: ImageDraw.ImageDraw, progress: float) -> None:
-    """Reveal the compact result after the illustrated calculation finishes."""
-    text(draw, (478, 227), "03 / REPORT", TextStyle(16, MUTED, 210))
-    ready = progress >= 0.72
-    draw.polygon(
-        ((478, 260), (660, 260), (688, 288), (688, 463), (478, 463)),
-        fill=SURFACE,
-        outline=ACCENT if ready else LINE,
-    )
-    draw.line((660, 260, 660, 288, 688, 288), fill=ACCENT if ready else LINE, width=1)
-    for top, label, key in (
-        (284, "sales", "sales_count"),
-        (338, "units", "units_sold"),
-        (392, "cents", "revenue_cents"),
-    ):
-        value = f"{REPORT[key]:,}" if ready else "—"
-        text(draw, (496, top), value, TextStyle(30, ACCENT if ready else MUTED, 170))
-        text(draw, (496, top + 32), label, TextStyle(15, MUTED, 170))
-
-
-def timeline(draw: ImageDraw.ImageDraw, progress: float) -> None:
-    """Show the current phase; timing is illustrative, never a benchmark."""
-    if progress < 0.12:
-        label = "Generate three reproducible sale records."
-    elif progress < 0.72:
-        label = "Count sales. Add units. Sum quantity × price."
-    else:
-        label = "Return one compact report."
-    text(draw, (32, 500), label, TextStyle(23))
-    draw.rounded_rectangle((32, 541, 688, 545), radius=2, fill=LINE)
-    draw.rounded_rectangle(
-        (32, 541, 33 + round(progress * 655), 545), radius=2, fill=ACCENT
-    )
-    text(draw, (32, 565), "LOCAL PYTHON  ·  ILLUSTRATED FLOW", TextStyle(14, MUTED))
-    text(draw, (513, 565), "No services required", TextStyle(16, MUTED, 175))
+    if 0 <= phase < 0.18:
+        packet(draw, incoming, phase / 0.18, lane)
+    elif 0.54 <= phase < 0.74:
+        packet(draw, outgoing, (phase - 0.54) / 0.2, lane, compact=True)
+    elif 0.74 <= phase < 0.94:
+        # Pass through the result consumer; workers never write to the database.
+        packet(draw, ((566, 182), (782, 182)), (phase - 0.74) / 0.2, lane, compact=True)
+    elif phase >= 0.94:
+        x = 765 + (lane.number - 1) * 17
+        draw.ellipse((x - 4, 182, x + 4, 190), fill=lane.color)
 
 
 def frame(progress: float) -> Image.Image:
-    """Compose the receipt, computation and result at one animation position."""
+    """Compose three concurrent example jobs without implying live execution."""
     image = Image.new("RGB", SIZE, BACKGROUND)
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((0, 0, 719, 599), radius=16, outline=LINE)
-    heading(draw, progress)
-    sales_sheet(draw, progress)
-    processor(draw, progress)
-    report_sheet(draw, progress)
-    timeline(draw, progress)
+    draw.rounded_rectangle((0, 0, SIZE[0] - 1, SIZE[1] - 1), radius=12, outline=LINE)
+    infrastructure(draw)
+    for lane in WORKERS:
+        worker(draw, lane, progress)
     return image
 
 
@@ -185,7 +207,6 @@ def main() -> None:
     ASSETS.mkdir(parents=True, exist_ok=True)
     frames = [frame(index / 71) for index in range(72)]
     frames[-1].save(ASSETS / "labflow-flow.png", optimize=True)
-    # Include every phase so highlights and moving elements share stable colors.
     samples = Image.new("RGB", (SIZE[0], SIZE[1] * 3))
     for index, source in enumerate((frames[0], frames[30], frames[-1])):
         samples.paste(source, (0, index * SIZE[1]))
@@ -197,11 +218,11 @@ def main() -> None:
         ASSETS / "labflow-flow.gif",
         save_all=True,
         append_images=indexed[1:],
-        duration=[90] * 71 + [1800],
+        duration=[90] * 71 + [1200],
         loop=0,
         optimize=True,
         disposal=1,
-        comment=b"Illustration of the local Python calculation; not a runtime trace.",
+        comment=b"Planned worker flow: three illustrative jobs, not a runtime trace.",
     )
     print("Rendered docs/assets/labflow-flow.gif and labflow-flow.png")
 

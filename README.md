@@ -15,9 +15,9 @@ LabFlow turns reproducible synthetic sales into compact reports. It is a public 
 
 **Running today:** a bounded Python generator and report aggregator. **Next:** durable jobs, asynchronous processing and observable Kubernetes operations.
 
-![Animated illustration of LabFlow's local calculation: seed 42 generates three sales with quantities 1, 2 and 5; aggregation returns 3 sales, 8 units and 16,998 cents.](docs/assets/labflow-flow.gif)
+<img src="docs/assets/labflow-flow.gif" width="720" alt="Planned Kubernetes worker flow: three distinct jobs from Kafka partitions go to three worker pods. Each worker generates data and computes a compact result, which returns through Kafka to the result consumer and PostgreSQL.">
 
-*Illustrated calculation; animation timing does not represent runtime or performance. [View the static diagram](docs/assets/labflow-flow.png).*
+*Planned processing flow, illustrated with three jobs and worker pods. Jobs and results are topics in the same Kafka cluster; motion does not represent measured performance. [Static diagram](docs/assets/labflow-flow.png).*
 
 ## 🧪 Current capabilities
 
@@ -86,57 +86,78 @@ Run the test suite from the repository root:
 2. **Calculate:** each sale exposes `total_cents = quantity × unit_price_cents`. [`summarize_sales`](src/labflow/reporting.py) counts sales, adds units and sums those totals.
 3. **Return:** the caller receives a dictionary containing three integers. There is no API, queue or database in this execution path yet.
 
-The animation uses the same `seed=42, rows=3` example as the quick start. Its numbers come from the Python functions when the assets are generated.
+These functions will execute inside each worker. The quick start exercises them directly; the animation previews the future distributed processing path.
 
 ### Target: durable, asynchronous jobs
 
-**Planned architecture.** The distributed components below are not implemented yet. The Mac will host the application core; Oracle will add worker capacity in a later milestone.
+**Planned architecture.** Kubernetes will run the application core in **Minikube on the Mac**. A separate **K3s cluster on an Oracle ARM VM** will add workers later. These services and clusters are not implemented yet.
 
 ```mermaid
 flowchart TB
     client["Client / load generator"]
 
-    subgraph core["Application core · Mac / Minikube"]
-        ingress["Traefik · TLS / HTTP routing"] --> api["FastAPI · submit / poll"]
-        api -->|"1 · job + outbox transaction"| db[("PostgreSQL · official state")]
-        db -->|"2 · committed outbox events"| relay["Outbox publisher"]
-        relay --> jobs
-
-        subgraph kafka["Kafka · one cluster"]
-            jobs["Jobs topic · versioned inputs"]
-            results["Results topic · compact summaries"]
+    subgraph core["Kubernetes cluster · Minikube / Mac"]
+        subgraph entry["HTTP entry"]
+            ingress["Traefik<br/>Ingress controller + TLS"]
+            api_service["API Service"]
+            api["FastAPI pods<br/>Deployment"]
+            ingress --> api_service --> api
         end
 
-        jobs -->|"3 · consume"| worker["Local workers · generate + calculate"]
-        worker -->|"4 · publish outcome"| results
-        results --> writer["Result consumer"]
-        writer -->|"5 · deduplicate + persist"| db
+        subgraph storage["Persistent services"]
+            db[("PostgreSQL<br/>official state · PVC")]
+            kafka[("Kafka<br/>jobs + results topics · PVC")]
+        end
+
+        relay["Outbox publisher<br/>Deployment"]
+        worker["Worker pods<br/>Deployment · generate + compute"]
+        writer["Result consumer<br/>Deployment"]
+
+        api -->|"job + outbox transaction / status queries"| db
+        db -->|"committed outbox"| relay
+        relay -->|"publish jobs"| kafka
+        kafka -->|"consume job partitions"| worker
+        worker -->|"publish compact results"| kafka
+        kafka -->|"consume results"| writer
+        writer -->|"deduplicate + persist"| db
     end
 
     client <-->|"HTTPS · submit job / query result"| ingress
 
-    subgraph remote["Later · Oracle VM / K3s"]
-        extra["Additional workers"]
+    subgraph remote["Later · Kubernetes / K3s on Oracle ARM"]
+        extra["Additional worker pods<br/>Deployment"]
     end
 
-    jobs -.->|"Tailscale · consume"| extra
-    extra -.->|"Tailscale · return outcome"| results
+    kafka -.->|"Tailscale · consume jobs"| extra
+    extra -.->|"Tailscale · publish results"| kafka
 
     classDef service fill:#eff6ff,stroke:#2563eb,color:#172554
     classDef data fill:#ecfdf5,stroke:#0d9488,color:#134e4a
     classDef future fill:#faf5ff,stroke:#9333ea,color:#581c87,stroke-dasharray:5 5
-    class api,relay,worker,writer,ingress service
-    class db,jobs,results data
+    class api,relay,worker,writer,ingress,api_service service
+    class db,kafka data
     class extra future
 ```
 
 1. **Accept a job.** The API will record the job and its outbox event in one PostgreSQL transaction, then return a job identifier. Polling will read status and results from PostgreSQL.
 2. **Publish the work.** The outbox publisher will send committed events to Kafka. A crash after publishing can cause redelivery; accepted jobs must not silently disappear between the database write and publication.
-3. **Compute near the worker.** Workers will generate the dataset from small, versioned job inputs. Kafka will carry parameters and compact outcomes, not large datasets.
+3. **Distribute jobs across workers.** Kafka will assign job partitions across pods in one worker consumer group. Each worker will generate its dataset from small, versioned inputs and calculate the report locally. The animation shows three partitions and three workers as an example; the first deployment starts with one worker.
 4. **Return the outcome.** Workers will publish a result before committing their input offsets. Local and future Oracle workers will share the same job consumer group.
 5. **Persist once.** The result consumer will deduplicate final effects in PostgreSQL before committing result offsets. Computation may repeat; system-wide exactly-once processing is not a guarantee.
 
 Oracle workers will have no direct database access. Tailscale will connect the environments privately; Kafka, PostgreSQL and administrative interfaces will not be exposed directly to the internet. One Mac remains one physical failure domain.
+
+### Kubernetes operation
+
+| Responsibility | Planned resources and behavior |
+| --- | --- |
+| HTTP routing | An Ingress defines routing and TLS configuration. Traefik is its controller; the API Service selects ready FastAPI pods. |
+| Application lifecycle | Deployments manage API, publisher, worker and result-consumer pods, with health probes, resource requests and limits. |
+| Persistent data | PostgreSQL and Kafka use PersistentVolumeClaims (PVCs). Provisioner behavior must be checked before multinode experiments; local volumes do not provide independent-host recovery. |
+| Isolation | Namespaces, ResourceQuota, LimitRange, ServiceAccounts/RBAC and NetworkPolicies enforced by the selected CNI. |
+| Worker autoscaling | Metrics Server → resource metrics API → CPU HPA → worker Deployment replica count. CPU requests define the utilization baseline. |
+
+HTTP load balancing distributes requests across API pods; Kafka distributes partitions across consumers. HPA adds worker pods within available cluster capacity. More pods do not add physical CPU or memory, and useful consumer parallelism depends on the partition count. Oracle capacity is activated separately and manually at first. See [Kubernetes CPU autoscaling](https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/) for the metrics path.
 
 ### Reliability by design
 
