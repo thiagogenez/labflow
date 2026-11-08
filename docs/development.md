@@ -93,13 +93,15 @@ Historical prepublication scans covered an earlier set of files. Re-scan all cur
 
 ## README illustrations
 
-The README displays a static PNG of the current local calculation, with an optional link to the animated GIF. The three steps are stacked with larger labels for narrow screens. Both illustrate the calculation rather than a captured runtime trace or benchmark, and are generated from the checked-in script:
+The README displays the animated GIF directly and links to a static PNG. The receipt, aggregation chip and result sheet illustrate the current local calculation. Values come from `generate_sales(seed=42, rows=3)` and `summarize_sales`; animation timing is illustrative, not measured execution. Regenerate both assets with:
 
 ```bash
 .venv/bin/python .github/scripts/render_readme_assets.py
 ```
 
-Pillow is a hash-pinned development dependency, available to the editor and the repository-wide lint gate. It is documentation tooling and is not an application runtime dependency. Font availability can change rasterization between machines; labels and diagram content stay defined in source. Mermaid architecture diagrams remain editable directly in the README and are labelled as target architecture.
+Pillow is a hash-pinned development dependency, separate from application runtime dependencies. The generator draws the wave motif locally; the illustration requires no external image API or downloaded fonts. Font availability can change rasterization between machines. Review the opening, processing and completed frames, check readability at narrow widths, and keep the static alternative and descriptive alt text. GIF playback does not automatically follow reduced-motion preferences.
+
+The **How it works** section distinguishes the running Python core from the planned distributed system. Its Mermaid diagram remains editable in the README. Keep both the architecture labels and numbered explanation consistent with [the plan](plan.md).
 
 ## Changes and reviews
 
