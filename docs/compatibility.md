@@ -109,3 +109,11 @@ The initial README asset generator was outside the former `src/labflow tests` Py
 ## Shared Quality Gate CI (2026-11-08)
 
 [PR #2 CI](https://github.com/thiagogenez/labflow/actions/runs/42521136229) and [main CI](https://github.com/thiagogenez/labflow/actions/runs/42521372612) passed at `2ff07d8643529b34a15baf73e9d64ff7a9788da7`. All three jobs passed: the shared ShellCheck/Python gate, full-history Gitleaks and OSV-Scanner. The quality job installed the pinned environment, checked dependency consistency and confirmed native Linux ARM64 execution. GitHub reports the original 1Password SSH signature as Verified; PR #2 was integrated by fast-forward. This resolves the earlier pending Linux-runner verification for the shared gate. Required GitHub status checks remain unconfigured. These runs precede the public documentation/Pillow changes, which require their own validation.
+
+## Documentation Dependency Audit (2026-11-08)
+
+[PR #3 CI run 42522750402](https://github.com/thiagogenez/labflow/actions/runs/42522750402) passed the Python quality/test and secret-scan jobs but failed dependency auditing. OSV-Scanner reported 41 vulnerabilities affecting Pillow 12.3.0 and identified 13.0.0 as the fixed version. The failing audit was treated as a merge blocker; no findings were suppressed.
+
+Updated the direct pin to Pillow 13.0.0 after reviewing its [security fixes and API removals](https://pillow.readthedocs.io/en/stable/releasenotes/13.0.0.html). [PyPI release files](https://pypi.org/project/pillow/13.0.0/#files) include CPython 3.14 wheels for macOS ARM64 and Linux aarch64. Source review found no use of the removed APIs in the figure generator; its PNG output uses RGB rather than the removed I-mode save path.
+
+Regenerated the universal hash-pinned lock and installed Pillow 13.0.0 on macOS ARM64 with Python 3.14.10. Only Pillow's version/hash block changed; the lock includes the verified macOS and Linux ARM64 wheel hashes. Dependency consistency, Ruff, individual-file Black, Pylint and all 26 tests passed. Executing the figure generator into a temporary output directory produced byte-for-byte identical PNG and GIF files, including all 36 animation frames and their timing. These local checks do not establish the upgraded Linux ARM64 audit result; consult the PR's subsequent CI runs.
