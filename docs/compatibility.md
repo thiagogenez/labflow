@@ -100,3 +100,12 @@ Verified setup in the existing checkout and in a fresh, independent temporary re
 ## Foundation CI and Signature Verification (2026-11-08)
 
 [PR CI](https://github.com/thiagogenez/labflow/actions/runs/42516722176) and [main CI](https://github.com/thiagogenez/labflow/actions/runs/42517878193) passed at `c7c3faeedb447ace1cf15d018e7594fa4b04916c`, covering clean dependency installation, native Linux ARM64 execution, 26 pytest cases, Python quality checks, Gitleaks and OSV-Scanner. GitHub reports valid signatures for all three history commits. PR #1 was integrated by fast-forward, preserving the SSH-signed commits. These runs precede the shared pre-commit and ShellCheck workflow changes; they do not validate those changes.
+
+## Public Documentation Assets (2026-11-08)
+
+The initial README asset generator was outside the former `src/labflow tests` Pylint scope. Reproduced C0103 (hyphenated module name), E0401 (Pillow absent from the project environment), R0913 and R0917 (six label-helper arguments). Renamed it to `.github/scripts/render_readme_assets.py`, grouped label styling into a typed dataclass, and added Pillow 12.3.0 to the hash-pinned development dependencies. No diagnostics or exit statuses were suppressed. The generated GIF and PNG remain byte-for-byte identical.
+
+
+## Shared Quality Gate CI (2026-11-08)
+
+[PR #2 CI](https://github.com/thiagogenez/labflow/actions/runs/42521136229) and [main CI](https://github.com/thiagogenez/labflow/actions/runs/42521372612) passed at `2ff07d8643529b34a15baf73e9d64ff7a9788da7`. All three jobs passed: the shared ShellCheck/Python gate, full-history Gitleaks and OSV-Scanner. The quality job installed the pinned environment, checked dependency consistency and confirmed native Linux ARM64 execution. GitHub reports the original 1Password SSH signature as Verified; PR #2 was integrated by fast-forward. This resolves the earlier pending Linux-runner verification for the shared gate. Required GitHub status checks remain unconfigured. These runs precede the public documentation/Pillow changes, which require their own validation.

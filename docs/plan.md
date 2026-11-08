@@ -1,6 +1,6 @@
 # LabFlow Implementation Plan
 
-Status: M0 complete; the first M1 generator slice is implemented and locally verified. GitHub execution remains pending. Updated 2026-11-08 with basic CI, operational autoscaling, and explicit Kustomize learning requirements.
+Status: M0 and the M1 reporting foundation are complete, including successful PR and main CI runs for the shared quality gate. M2-M5 have not started. Updated 2026-11-08 with basic CI, operational autoscaling, and explicit Kustomize learning requirements.
 
 ## Purpose and Working Agreement
 
@@ -101,7 +101,7 @@ All time allocations below are estimates, not elapsed time or delivery promises.
 | Contingency | 1 h | Resolve failures or record remaining work accurately |
 | Total review budget | 20 h | Review every gate; extend the schedule if required |
 
-Current progress: M0 is complete; host RAM/CPU, Docker capabilities and essential storage facts are recorded in [preflight](preflight.md). The first M1 slice contains the bounded `sales-v1` generator, report aggregation, 26 passing pytest cases across 14 functions, and passing local quality checks. CI now defines quality/tests, secret scanning, and dependency auditing. The local prepublication Gitleaks scan passed for the 17 initial commit candidates. Full M1 completion still requires GitHub setup and successful PR/main workflow runs, including the remote scanners. M2-M5 have not started. Exact stack consumption will be measured during component execution.
+Current progress: M0 and the M1 reporting foundation are complete. The bounded `sales-v1` generator and report aggregation have 26 passing pytest cases across 14 functions. The shared quality gate passed [PR CI](https://github.com/thiagogenez/labflow/actions/runs/42521136229) and [main CI](https://github.com/thiagogenez/labflow/actions/runs/42521372612) at `2ff07d8`, including native Linux ARM64 execution, ShellCheck, Python quality checks, Gitleaks and dependency auditing. These runs cover the reporting foundation and shared quality gate; later changes require their own validation. M2-M5 have not started. Exact stack consumption will be measured during component execution.
 
 If twenty hours are exhausted, publish the exact pending criteria, such as missing HPA observations or an unresolved integration test, with a next step. Keep the demonstration marked incomplete until both experiments and their explanations satisfy the criteria.
 

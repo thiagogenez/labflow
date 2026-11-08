@@ -87,9 +87,19 @@ The workflow uses `ubuntu-24.04-arm`, the Python version in `.python-version`, f
 
 Gitleaks scans fetched Git history; OSV-Scanner audits the explicitly selected Python lockfile. Findings and scan errors fail their jobs. A passing scan covers its selected inputs and detection rules or known advisories, not every possible vulnerability.
 
-The foundation passed [PR CI](https://github.com/thiagogenez/labflow/actions/runs/42516722176) and [main CI](https://github.com/thiagogenez/labflow/actions/runs/42517878193) at `c7c3fae`. These runs validate the earlier workflow; the shared hook integration introduced here needs its own successful run. Required status checks are not yet configured.
+The shared quality gate passed [PR CI](https://github.com/thiagogenez/labflow/actions/runs/42521136229) and [main CI](https://github.com/thiagogenez/labflow/actions/runs/42521372612) at `2ff07d8`, including native ARM64 execution, ShellCheck and the Python checks. Changes introduced afterward require their own validation. Required status checks are not yet configured.
 
 Historical prepublication scans covered an earlier set of files. Re-scan all current commit candidates after README, diagram, script or configuration changes before publishing. Keep unique evidence and historical results in the compatibility record without treating old scans as current.
+
+## README illustrations
+
+The README displays a static PNG of the current local calculation, with an optional link to the animated GIF. The three steps are stacked with larger labels for narrow screens. Both illustrate the calculation rather than a captured runtime trace or benchmark, and are generated from the checked-in script:
+
+```bash
+.venv/bin/python .github/scripts/render_readme_assets.py
+```
+
+Pillow is a hash-pinned development dependency, available to the editor and the repository-wide lint gate. It is documentation tooling and is not an application runtime dependency. Font availability can change rasterization between machines; labels and diagram content stay defined in source. Mermaid architecture diagrams remain editable directly in the README and are labelled as target architecture.
 
 ## Changes and reviews
 
