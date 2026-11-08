@@ -6,7 +6,7 @@ Clients submit jobs, workers perform real computation, and a result consumer per
 
 ## Current Status
 
-Milestone zero is complete. The first M1 slice implements a bounded, deterministic sales generator, report aggregation, and 26 test cases across 14 test functions. Local tests, Ruff lint, Black formatting and Pylint checks pass. CI defines separate Python quality, secret scanning, and dependency audit jobs; remote execution remains pending. No API, database, broker, or Kubernetes resources have been implemented.
+Milestone zero is complete. The first M1 slice implements a bounded, deterministic sales generator, report aggregation, and 26 test cases across 14 test functions. Local tests, Ruff lint, Black formatting and Pylint checks pass. The foundation passed separate Python quality, secret scanning and dependency audit jobs on its PR and resulting `main` commit. The shared quality-gate integration in this change still needs its own CI run. No API, database, broker, or Kubernetes resources have been implemented.
 
 The first demonstrable version must later include both a duplicate-delivery experiment and an operational CPU-based HPA experiment. Twenty hours is a review budget, not proof of completion.
 
@@ -20,12 +20,10 @@ The `sales-v1` generator accepts 1-10,000 rows and seeds from 0 through 4,294,96
 
 ## Local Setup
 
-Use a Python 3.14 virtual environment so the editor, tests and lint tools resolve the same installed `src` package:
+With Git, Make, uv and CPython 3.14.10 available, prepare the pinned environment and activate this clone's commit checks:
 
 ```sh
-uv venv --python python3.14 .venv
-uv pip install --python .venv/bin/python --require-hashes --only-binary=:all: -r requirements-dev.txt
-uv pip install --python .venv/bin/python --no-build-isolation --no-deps -e .
+make setup
 ```
 
 Open this repository as the VS Code workspace and select `.venv/bin/python`. Workspace settings point Pylint and Black at that environment. Installing the `src` package, rather than adding paths to individual test files, fixes runtime and linter imports together. The VS Code Pylint and Black Formatter extensions must be installed to use their editor integrations.
@@ -45,7 +43,8 @@ Use Python 3.14.10, recorded in `.python-version`. The tests use pytest 9.2.0, p
 | `.venv/bin/python -m pytest -v` | Run 26 cases, including report aggregation and individually named invalid inputs |
 | `.venv/bin/ruff check --no-cache .` | Check default lint rules with Ruff 0.17.4 |
 | `.venv/bin/black --check --diff .` | Verify default formatting with Black 26.10.1 |
-| `.venv/bin/pylint --persistent=n src/labflow tests` | Check default Pylint diagnostics without writing its score cache |
+| `make check` | Run the shared ShellCheck, Ruff, Black, Pylint and pytest gates on indexed files |
+| `make check-staged` | Check staged contents with temporary preservation of unstaged changes |
 
 Development tools and their transitive dependencies are pinned with hashes in `requirements-dev.txt`; direct pins live in `requirements-dev.in`. Ruff performs linting, Black owns formatting, and Pylint 4.1.3 provides editor and CI diagnostics. CI installs the package in editable mode, checks installed dependency consistency, and verifies that Python actually executes on ARM64.
 
@@ -53,12 +52,13 @@ Development tools and their transitive dependencies are pinned with hashes in `r
 
 The three CI jobs run on `ubuntu-24.04-arm` for pull requests and pushes to `main`. Each has read-only repository permissions; quality has a ten-minute timeout and each scanner has five minutes. Gitleaks 8.30.1 scans the fetched Git history with redacted findings. OSV-Scanner 2.7.0 checks the pinned Python dependencies for known vulnerabilities. Scanner binaries have explicit versions and SHA-256 checksums; actions have verified full commit references. Findings and scan failures fail their jobs. PR runs can cancel obsolete PR runs; each main commit gets its own run.
 
-Local Gitleaks 8.30.1 scanning found no secrets in the 17 Git-visible files selected for the initial commit. Remote scanner execution remains pending. A successful audit only covers the scanned inputs and known detection rules/advisories. Required status checks must be configured in GitHub after the repository and job names exist; a workflow alone does not enforce merge restrictions.
+Local Gitleaks 8.30.1 scanning found no secrets in the 17 Git-visible files selected for the initial commit. The foundation's [PR](https://github.com/thiagogenez/labflow/actions/runs/42516722176) and [main](https://github.com/thiagogenez/labflow/actions/runs/42517878193) scanner runs passed; changes to the workflow and dependency lock need new runs. A successful audit only covers the scanned inputs and known detection rules/advisories. Required status checks must be configured in GitHub after the repository and job names exist; a workflow alone does not enforce merge restrictions.
 
 The local experiment passed: identical inputs reproduced the expected data, a different seed changed the dataset, unrelated calls did not alter it, and invalid sizes/types were rejected. This is correctness evidence for the generator, not a throughput benchmark or evidence that the asynchronous application works.
 
 ## Start Here
 
+- [Development guide](docs/development.md): setup, signed commits and shared quality gates.
 - [Repository guidelines](AGENTS.md): contributor and learning workflow.
 - [Implementation plan](docs/plan.md): architecture, milestones, ownership, experiments, and completion criteria.
 - [Environment preflight](docs/preflight.md): observed facts, estimates, unresolved checks, and installation gates.

@@ -1,0 +1,39 @@
+minimum_pre_commit_version: "4.7.0"
+default_install_hook_types: [pre-commit]
+default_stages: [pre-commit]
+fail_fast: true
+
+repos:
+  - repo: local
+    hooks:
+      - id: shellcheck
+        name: ShellCheck (shell scripts)
+        entry: .venv/bin/shellcheck
+        language: unsupported
+        types: [shell]
+        require_serial: true
+      - id: ruff
+        name: Ruff
+        entry: .venv/bin/python -m ruff check --no-cache
+        language: unsupported
+        types: [python]
+        require_serial: true
+      - id: black
+        name: Black (check only)
+        entry: .venv/bin/python -m black --check --diff --no-cache
+        language: unsupported
+        types: [python]
+        require_serial: true
+      - id: pylint
+        name: Pylint (all staged Python, including scripts)
+        entry: .venv/bin/python -m pylint --persistent=no
+        language: unsupported
+        types: [python]
+        require_serial: true
+      - id: pytest
+        name: Pytest
+        entry: .venv/bin/python -m pytest -v
+        language: unsupported
+        types: [file]
+        pass_filenames: false
+        always_run: true
