@@ -1,0 +1,6 @@
+# Direct tool pins; regenerate requirements-dev.txt with the documented uv command.
+ruff==0.17.4
+black==26.10.1
+pylint==4.1.3
+pytest==9.2.0
+setuptools==84.2.1

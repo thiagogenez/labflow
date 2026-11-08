@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools==84.2.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "labflow"
+version = "0.1.0"
+description = "A reproducible Platform Engineering and SRE learning lab"
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+dependencies = []
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["labflow*"]
+namespaces = false
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+src = ["src"]
+
+# Keep upstream default Ruff lint rules and Black formatting style.
+# Python targeting and tool version pins are project compatibility settings.
+[tool.black]
+required-version = "26.10.1"
+
+[tool.pylint.main]
+py-version = "3.14"
+source-roots = ["src"]
+
+[tool.pylint.imports]
+known-first-party = ["labflow"]
+
+[tool.pytest.ini_options]
+minversion = "9.2"
+testpaths = ["tests"]
+addopts = "-ra"

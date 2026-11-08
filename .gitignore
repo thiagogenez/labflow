@@ -1,0 +1,74 @@
+# Python environments and bytecode
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pylint.d/
+.hypothesis/
+.tox/
+.nox/
+.cache/
+
+# Package build output and metadata
+/build/
+/dist/
+*.egg-info/
+.eggs/
+
+# Generated test, coverage and experiment reports
+.coverage
+.coverage.*
+/coverage.xml
+/htmlcov/
+/reports/
+/artifacts/
+
+# Local runtime state: logs, volumes, generated data and scratch files
+# Keep curated fixtures and published experiment evidence in versioned paths.
+/.local/
+/tmp/
+
+# Local configuration and private credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+.secrets/
+.aws/
+.oci/
+.kube/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Terraform working directories and potentially sensitive state
+.terraform/
+*.tfstate
+*.tfstate.*
+*.secret.tfvars
+*.secret.tfvars.json
+crash.log
+crash.*.log
+
+# Operating-system metadata and local editor history
+.DS_Store
+._*
+/Thumbs.db
+/Desktop.ini
+/.idea/
+.history/
+*.swp
+*.swo
+*~
+
+# Intentionally tracked: shared .vscode settings, .python-version,
+# requirements files and lockfiles (including .terraform.lock.hcl),
+# Helm/Kustomize manifests, encrypted secret manifests, configuration
+# examples, curated test fixtures and documented experiment evidence.
