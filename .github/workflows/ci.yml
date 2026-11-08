@@ -33,14 +33,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Download and verify Gitleaks
-        working-directory: ${{ runner.temp }}
-        run: |
-          curl --fail --silent --show-error --location \
-            --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
-            --output gitleaks.tar.gz \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_arm64.tar.gz"
-          printf '%s  %s\n' "$GITLEAKS_SHA256" gitleaks.tar.gz | sha256sum --check --strict
-          tar -xzf gitleaks.tar.gz gitleaks
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/install-gitleaks.sh"
       - name: Scan Git history
         run: >-
           "$RUNNER_TEMP/gitleaks" git --redact --no-banner
@@ -61,14 +54,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download and verify OSV-Scanner
-        working-directory: ${{ runner.temp }}
-        run: |
-          curl --fail --silent --show-error --location \
-            --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
-            --output osv-scanner \
-            "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_arm64"
-          printf '%s  %s\n' "$OSV_SHA256" osv-scanner | sha256sum --check --strict
-          chmod +x osv-scanner
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/install-osv-scanner.sh"
       - name: Audit pinned Python dependencies
         run: >-
           "$RUNNER_TEMP/osv-scanner" scan source
