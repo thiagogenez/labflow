@@ -8,7 +8,13 @@ Buyers place orders. Merchants query their store's order values over a period. T
 
 An order creates one asynchronous processing job. An order-summary query reads existing orders; it does not create sales or another job. Large exports or expensive analytical reports can receive a separate asynchronous contract when needed.
 
-The existing `sales-v1` generator and aggregation tests remain intact. Their sale rows are not order entities: `sales_count` must not be relabelled as an order count. A future order-request generator will use a versioned catalog with consistent product prices and explicit initial stock per store/product. Initial stock is seeded once; restarting services must not replenish it.
+The existing `sales-v1` generator and aggregation tests remain intact. Their sale rows are not order entities: `sales_count` must not be relabelled as an order count. A future order-request generator will use shared product metadata, versioned store price lists and explicit initial stock per store/product. Initial stock is seeded once; restarting services must not replenish it.
+
+## Product Catalog, Store Prices and Inventory
+
+A shared `Catalog` defines immutable product metadata (SKU, name and description), without store identity, prices or stock. Multiple stores can reference the same product snapshot. Each `PriceList` binds one `Store`, its fixed currency, a product-catalog snapshot and a versioned subset of products offered with integer-cent prices. Price-list SKUs must exist in that catalog. Prices are independent per store, with no currency conversion; the local model supports EUR and BRL.
+
+Quotes preserve both product-catalog and price-list versions along with store identity, currency and accepted prices. A product existing in the shared catalog does not imply that every store offers it. Inventory remains a separate authoritative per-store/per-SKU concern. Store configuration, product snapshots and price lists are server-controlled; these in-memory objects do not enforce authorization or global version uniqueness.
 
 ## Buyer Interface
 
@@ -29,7 +35,7 @@ Example request body:
 }
 ```
 
-The server resolves prices from its trusted catalog and freezes product identifiers, unit prices, quantities, currency, catalog version and `quoted_total_cents` when accepting the order. Buyers do not supply trusted prices, totals or acceptance timestamps. For example, unit prices of 1,990 and 3,500 cents produce a quoted total of 7,480 cents. Workers check the accepted snapshot and applicable business rules and return a proposed outcome. The core alone makes the authoritative decision. Workers neither invent purchases nor reprice accepted orders. A successful final total must match the frozen quote; inconsistent results must not finalize the order.
+The server resolves prices from its trusted store price list and freezes product identifiers, unit prices, quantities, currency, product-catalog version, price-list version and `quoted_total_cents` when accepting the order. Buyers do not supply trusted prices, totals or acceptance timestamps. For example, unit prices of 1,990 and 3,500 cents produce a quoted total of 7,480 cents. Workers check the accepted snapshot and applicable business rules and return a proposed outcome. The core alone makes the authoritative decision. Workers neither invent purchases nor reprice accepted orders. A successful final total must match the frozen quote; inconsistent results must not finalize the order.
 
 Proposed admission limits are 1–20 distinct product lines and integer quantities of 1–100 per line, with a maximum serialized event size of 64 KiB. These are initial policy bounds, not measured capacity. Reject invalid types, duplicate product lines, unknown products, currency mismatches and arithmetic overflow. Rate, pending-order and storage limits must also be set before load experiments.
 
@@ -131,4 +137,4 @@ The duplicate-delivery experiment must prove unchanged order counts, merchant or
 
 M2 acceptance requires concurrent tests for ten pieces/three five-piece submissions, multi-item reservation rollback, duplicate admission and completion, stock invariants, reservation release, restart-safe initial stock, expiry versus completion races, late-result suppression, core-outage recovery, and tests for price snapshots, mismatched final totals, HTTP idempotency (including price changes), duplicate results, stale attempts, retry exhaustion, period boundaries, status-bucket calculations and transitions, rejected/failed-amount exclusion, empty periods and cross-store access. Test outbox/offset crash windows against real PostgreSQL and Kafka.
 
-The next implementation slice is deliberately small: typed order items, a versioned catalog/initial-stock fixture, integer total calculation and unit tests. It adds no HTTP server or infrastructure. Follow with transactional API/database reservation and summary reads, then the event pipeline and its failure tests, one reviewed step at a time.
+The implemented local pricing slice includes typed order items, shared product fixtures, versioned store price lists and integer-cent quotation tests. Remote CI for this slice is pending. Initial-stock fixtures and transactional inventory remain to implement. It adds no HTTP server or infrastructure. Follow with transactional API/database reservation and summary reads, then the event pipeline and its failure tests, one reviewed step at a time.

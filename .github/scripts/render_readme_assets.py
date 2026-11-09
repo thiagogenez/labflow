@@ -1,5 +1,6 @@
-"""Render the planned Kafka/worker flow as compact README illustrations."""
+"""Render worker-flow and application-model README illustrations."""
 
+from argparse import ArgumentParser
 from dataclasses import dataclass
 from functools import cache
 from itertools import pairwise
@@ -11,6 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / "docs" / "assets"
 SIZE = (840, 320)
+DOMAIN_SIZE = (840, 360)
 BACKGROUND = "#0b1821"
 SURFACE = "#132631"
 TEXT = "#eef5f5"
@@ -41,6 +43,23 @@ WORKERS = (
     WorkerLane(1, 126, ACCENT),
     WorkerLane(2, 182, "#83baf4"),
     WorkerLane(3, 238, "#f0c477"),
+)
+
+
+@dataclass(frozen=True)
+class PricingLane:
+    """One illustrative store, its fixed currency and independent unit price."""
+
+    top: int
+    store: str
+    currency: str
+    unit_cents: int
+    color: str
+
+
+PRICING_LANES = (
+    PricingLane(90, "Berlin", "EUR", 1990, ACCENT),
+    PricingLane(215, "Sao Paulo", "BRL", 5990, "#83baf4"),
 )
 
 
@@ -209,29 +228,151 @@ def frame(progress: float) -> Image.Image:
     return image
 
 
+def domain_reference(
+    draw: ImageDraw.ImageDraw,
+    path: tuple[tuple[int, int], tuple[int, int]],
+    color: str,
+    *,
+    dashed: bool = False,
+) -> None:
+    """Draw a left-pointing object-reference or construction-dependency arrow."""
+    start_x, y = path[0]
+    end_x, _ = path[1]
+    if dashed:
+        for x in range(start_x, end_x, -12):
+            draw.line(((x, y), (max(x - 6, end_x), y)), fill=color, width=2)
+    else:
+        draw.line(path, fill=color, width=2)
+    draw.polygon(((end_x + 7, y - 4), (end_x, y), (end_x + 7, y + 4)), fill=color)
+
+
+def pricing_lane(draw: ImageDraw.ImageDraw, lane: PricingLane, progress: float) -> None:
+    """Highlight dependencies in place without implying network messages or traffic."""
+    stage = min(int(progress * 3), 2)
+    domain_reference(
+        draw,
+        ((304, lane.top + 50), (232, lane.top + 50)),
+        lane.color if stage == 0 else MUTED,
+    )
+    domain_reference(
+        draw,
+        ((600, lane.top + 50), (514, lane.top + 50)),
+        lane.color if stage == 2 else MUTED,
+        dashed=True,
+    )
+    draw.rounded_rectangle(
+        (304, lane.top, 514, lane.top + 97),
+        radius=8,
+        fill="#203c45" if stage == 1 else SURFACE,
+        outline=lane.color,
+    )
+    text(draw, (318, lane.top + 10), "PriceList", TextStyle(22, TEXT, 182))
+    text(
+        draw,
+        (318, lane.top + 38),
+        f"Store: {lane.store} / {lane.currency}",
+        TextStyle(15, MUTED, 182),
+    )
+    text(
+        draw,
+        (318, lane.top + 61),
+        f"{lane.unit_cents} cents / shirt",
+        TextStyle(17, lane.color, 182),
+    )
+    draw.rounded_rectangle(
+        (600, lane.top, 816, lane.top + 97),
+        radius=8,
+        fill="#203c45" if stage == 2 else SURFACE,
+        outline=lane.color,
+    )
+    text(draw, (614, lane.top + 10), "OrderQuote", TextStyle(22, TEXT, 188))
+    text(
+        draw,
+        (614, lane.top + 39),
+        "QuotedItem: sku-shirt x 2",
+        TextStyle(15, MUTED, 188),
+    )
+    total = 2 * lane.unit_cents
+    text(
+        draw,
+        (614, lane.top + 61),
+        f"{lane.currency} {total // 100}.{total % 100:02d}",
+        TextStyle(22, lane.color, 188),
+    )
+
+
+def domain_frame(progress: float) -> Image.Image:
+    """Illustrate shared products and independent pricing without runtime claims."""
+    image = Image.new("RGB", DOMAIN_SIZE, BACKGROUND)
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((0, 0, 839, 359), radius=12, outline=LINE)
+    text(draw, (24, 18), "Object relationships / one shared catalog", TextStyle(26))
+    text(
+        draw,
+        (24, 54),
+        "Solid: retained reference / dashed: constructor dependency",
+        TextStyle(16, MUTED),
+    )
+    draw.rounded_rectangle(
+        (24, 98, 232, 307),
+        radius=8,
+        fill="#203c45" if progress < 1 / 3 else SURFACE,
+        outline=MUTED,
+    )
+    text(draw, (40, 113), "Catalog", TextStyle(24, TEXT, 176))
+    text(draw, (40, 146), "products-v1 / shared", TextStyle(15, MUTED, 176))
+    draw.rounded_rectangle((40, 180, 216, 264), radius=6, outline=LINE)
+    text(draw, (52, 192), "Product", TextStyle(21, TEXT, 152))
+    text(draw, (52, 221), "sku-shirt / size M", TextStyle(16, MUTED, 152))
+    text(draw, (40, 281), "Metadata only", TextStyle(16, MUTED, 176))
+    for lane in PRICING_LANES:
+        pricing_lane(draw, lane, progress)
+    text(
+        draw,
+        (24, 334),
+        (
+            "1. Both price lists retain a reference to the same product catalog.",
+            "2. Each price list uses its store currency and independent prices.",
+            "3. A quote copies values; it does not retain a PriceList reference.",
+        )[min(int(progress * 3), 2)],
+        TextStyle(17, MUTED),
+    )
+    return image
+
+
 def main() -> None:
     """Write the animated and static assets with the same labels and layout."""
+    parser = ArgumentParser(description=__doc__)
+    parser.add_argument("--diagram", choices=("workers", "domain"), default="workers")
+    args = parser.parse_args()
+    render = domain_frame if args.diagram == "domain" else frame
+    stem = "labflow-domain" if args.diagram == "domain" else "labflow-flow"
     ASSETS.mkdir(parents=True, exist_ok=True)
-    frames = [frame(index / 71) for index in range(72)]
-    frames[-1].save(ASSETS / "labflow-flow.png", optimize=True)
-    samples = Image.new("RGB", (SIZE[0], SIZE[1] * 3))
+    frames = [render(index / 71) for index in range(72)]
+    frames[-1].save(ASSETS / f"{stem}.png", optimize=True)
+    width, height = frames[0].size
+    samples = Image.new("RGB", (width, height * 3))
     for index, source in enumerate((frames[0], frames[30], frames[-1])):
-        samples.paste(source, (0, index * SIZE[1]))
+        samples.paste(source, (0, index * height))
     palette = samples.quantize(colors=128, dither=Image.Dither.NONE)
     indexed = [
         image.quantize(palette=palette, dither=Image.Dither.NONE) for image in frames
     ]
     indexed[0].save(
-        ASSETS / "labflow-flow.gif",
+        ASSETS / f"{stem}.gif",
         save_all=True,
         append_images=indexed[1:],
         duration=[90] * 71 + [1200],
         loop=0,
         optimize=True,
         disposal=1,
-        comment=b"Illustrative accepted orders; not a runtime trace.",
+        comment=(
+            b"Illustrative pricing snapshots; not a runtime trace."
+            if args.diagram == "domain"
+            else b"Illustrative accepted orders; not a runtime trace."
+        ),
     )
-    print("Rendered docs/assets/labflow-flow.gif and labflow-flow.png")
+    print(f"Rendered docs/assets/{stem}.gif and {stem}.png")
 
 
 if __name__ == "__main__":
