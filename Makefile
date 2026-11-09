@@ -4,7 +4,7 @@ help:
 	@printf '%s\n' \
 	  'make setup         Install pinned tools and activate the local commit hook' \
 	  'make check         Check indexed code working copies and run tests' \
-	  'make check-staged  Check staged contents as the commit hook does' \
+	  'make check-staged  Check the full repository with staged changes applied' \
 	  'make test          Run the pytest suite'
 
 setup:
@@ -15,7 +15,7 @@ setup:
 	.venv/bin/python -m pre_commit install
 
 check:
-	.venv/bin/python -m pre_commit run --all-files --show-diff-on-failure
+	.venv/bin/python -m pre_commit run --all-files --hook-stage manual --show-diff-on-failure
 
 check-staged:
 	.venv/bin/python -m pre_commit run --show-diff-on-failure

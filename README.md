@@ -204,7 +204,7 @@ The [CI workflow](.github/workflows/ci.yml) defines three independent jobs:
 
 Jobs have read-only repository permissions and explicit timeouts. Actions are pinned to full commit references; scanner downloads have fixed versions and SHA-256 checksums. PR runs can cancel obsolete runs. Publishing and deployment credentials are outside this CI scope.
 
-The local commit hook blocks staged Python and shell failures, including errors in documentation and CI scripts. CI runs the same hook configuration with `--all-files`. Scanner installation logic lives in [`.github/scripts/`](.github/scripts/). Required merge checks must be configured in GitHub after their first runs. See [development and validation](docs/development.md) for local checks and the limits of each result.
+Every commit automatically runs `make check` against all indexed Python and shell files and the full test suite, temporarily preserving unstaged tracked changes. This includes documentation and CI scripts. CI runs the same gate against its clean checkout. Scanner installation logic lives in [`.github/scripts/`](.github/scripts/). The protected main branch requires pull requests, signed commits and all three CI checks. See [development and validation](docs/development.md) for local checks and the limits of each result.
 
 ## 🗺 Roadmap
 

@@ -34,23 +34,26 @@ Before merging, confirm that GitHub marks every incoming commit **Verified**. A 
 
 The versioned `Makefile`, `.pre-commit-config.yaml`, tool locks and installer scripts define the same checks for every developer. The file generated at `.git/hooks/pre-commit` contains a clone-specific Python path and is local Git metadata; Git does not copy client hooks during cloning. Each developer explicitly activates them with `make setup`. See [Git hooks](https://git-scm.com/book/en/v2/Customizing-Git-Git-Hooks).
 
-The shared `.pre-commit-config.yaml` runs ShellCheck, Ruff, Black in check-only mode, Pylint and pytest. Any nonzero result aborts the commit. No diagnostics are suppressed to make the gate pass. During the normal commit hook, pre-commit temporarily stashes unstaged tracked changes, checks staged file contents and restores the working changes. Python and shell scripts under `.github/` are included whenever staged. ShellCheck runs with its default diagnostics and no severity reduction.
+Every commit automatically runs **`make check`** through the installed pre-commit hook. The shared `.pre-commit-config.yaml` defines ShellCheck, Ruff, Black in check-only mode, Pylint and pytest. All indexed Python and shell files are checked, including `.github/scripts`, even for a documentation-only commit. Any nonzero result aborts the commit; no diagnostics are suppressed.
 
-For a repository-wide check, add intended new files to the index and run:
+Stage changes to `.pre-commit-config.yaml` before committing; pre-commit refuses an unstaged configuration. The outer hook temporarily stashes other unstaged tracked changes and restores them afterward. Inside that staged view, `make check` selects all indexed files and the full test suite. The individual tools use pre-commit's `manual` stage, selected explicitly by Make; the entry-point hook uses the `pre-commit` stage. This separation prevents recursion. See [pre-commit stages](https://pre-commit.com/#confining-hooks-to-run-at-certain-stages).
 
-```bash
-.venv/bin/python -m pre_commit run --all-files --show-diff-on-failure
-```
-
-`--all-files` selects paths from the Git index, including newly staged files, but checks their **working-tree contents** without hiding unstaged edits. Untracked files are not selected for ShellCheck, Ruff, Black or Pylint. Pytest separately runs the whole discovered test suite. A passing working-tree check does not prove that a different staged version passed.
-
-Before requesting a commit, also check the staged changes using the same mode as the commit hook:
+After `make setup`, the normal workflow needs no separate check command:
 
 ```bash
-.venv/bin/python -m pre_commit run --show-diff-on-failure
+git add <intended-files>
+git commit -S -m "type: describe the change"
 ```
 
-The CI job installs the same pinned tools in `.venv`, uses the same ShellCheck installer, and runs `--all-files` against its clean checkout, including every versioned shell script. The [pre-commit command reference](https://pre-commit.com/#pre-commit-run) describes both modes. Local hooks do not replace required CI status checks: they can be bypassed, while merge enforcement requires GitHub branch rules.
+For earlier feedback, `make check` remains available. Run directly, it checks the **working-tree contents** of indexed paths without hiding unstaged edits. New files must be added to the index to be selected for ShellCheck, Ruff, Black or Pylint. Pytest separately runs the whole discovered test suite, including untracked tests if present. A passing working-tree check does not prove that a different staged version passed.
+
+To preview exactly the hook's staged mode without creating a commit:
+
+```bash
+make check-staged
+```
+
+The CI job installs the same pinned tools in `.venv`, uses the same ShellCheck installer, and runs `--all-files` against its clean checkout, including every versioned shell script. The [pre-commit command reference](https://pre-commit.com/#pre-commit-run) describes both modes. Local hooks do not replace required CI status checks. The active main ruleset requires pull requests, signed commits and the three CI jobs, with no bypass actors.
 
 ## Editor
 
@@ -68,7 +71,7 @@ Run from the repository root:
 | `.venv/bin/ruff check --no-cache .` | Upstream default lint rules |
 | `.venv/bin/black --check --diff .` | Default stable formatting without edits |
 | `make check` | Check working-tree contents of Git-indexed shell and Python files, including `.github/scripts`, followed by pytest |
-| `make check-staged` | Check staged contents with temporary unstaged-change preservation |
+| `make check-staged` | Run the full gate in the staged view, temporarily preserving unstaged tracked changes |
 | `uv pip check --python .venv/bin/python` | Installed dependency consistency |
 | `actionlint .github/workflows/ci.yml` | Workflow syntax and supported expressions |
 | `.venv/bin/shellcheck .github/scripts/*.sh` | Default ShellCheck diagnostics using the pinned local binary |
