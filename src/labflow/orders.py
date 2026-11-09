@@ -1,16 +1,73 @@
-"""Bounded order quotations using one store's trusted price list."""
+"""Immutable order quotations and processing lifecycle rules."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
+from enum import StrEnum
 from typing import Self
+from uuid import UUID
 
 from labflow.catalog import validate_identifier
 from labflow.currency import MAX_AMOUNT_CENTS, Currency
 from labflow.price_list import PriceList
 from labflow.store import validate_store_configuration
-from labflow.validation import validate_integer_range
+from labflow.validation import normalize_utc_datetime, validate_integer_range
 
 MAX_ORDER_LINES = 20
 MAX_QUANTITY = 100
+
+
+class OrderStatus(StrEnum):
+    """States of the current asynchronous order-processing lifecycle.
+
+    Pending includes queued work, active processing and bounded retries. Jobs
+    and attempts track those execution details. Confirmation implies neither
+    payment nor shipment; payment, fulfillment and cancellation require separate
+    lifecycle rules when introduced.
+    """
+
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+    PROCESSING_FAILED = "processing_failed"
+
+
+class OrderFailureReason(StrEnum):
+    """Safe reasons for business rejection or definitive processing failure.
+
+    Pending and confirmed orders have no failure reason. Retry execution details
+    belong in separate attempt records.
+    """
+
+    BUSINESS_RULE_VIOLATION = "business_rule_violation"
+    RETRY_EXHAUSTED = "retry_exhausted"
+    RESERVATION_EXPIRED = "reservation_expired"
+
+
+_ALLOWED_FAILURE_REASONS = {
+    OrderStatus.PENDING: (None,),
+    OrderStatus.CONFIRMED: (None,),
+    OrderStatus.REJECTED: (OrderFailureReason.BUSINESS_RULE_VIOLATION,),
+    OrderStatus.PROCESSING_FAILED: (
+        OrderFailureReason.RETRY_EXHAUSTED,
+        OrderFailureReason.RESERVATION_EXPIRED,
+    ),
+}
+
+
+class InvalidOrderTransitionError(ValueError):
+    """A processing transition would reopen or replace a final decision."""
+
+
+def _validate_resolution(
+    status: OrderStatus, reason: OrderFailureReason | None
+) -> None:
+    """Match each processing state to its permitted safe reason codes."""
+    if not isinstance(status, OrderStatus):
+        raise TypeError("status must be an OrderStatus")
+    if reason is not None and not isinstance(reason, OrderFailureReason):
+        raise TypeError("reason must be an OrderFailureReason or None")
+    if reason not in _ALLOWED_FAILURE_REASONS[status]:
+        raise ValueError(f"reason is incompatible with status {status.value}")
 
 
 def _validate_item(product_id: str, quantity: int) -> None:
@@ -90,6 +147,33 @@ class QuotedItem:
         return self.quantity * self.unit_price_cents
 
 
+def _validate_items(
+    items: tuple[OrderItem, ...] | tuple[QuotedItem, ...],
+    item_type: type[OrderItem | QuotedItem],
+    *,
+    name: str,
+) -> None:
+    """Validate the basket rules shared by requested and quoted items.
+
+    Args:
+        items: Tuple of 1 through MAX_ORDER_LINES items with distinct SKUs.
+        item_type: Required domain type, OrderItem or QuotedItem.
+        name: Basket name used in errors, such as "items" or "quoted items".
+
+    Raises:
+        TypeError: The container is not a tuple or contains an invalid item type.
+        ValueError: The basket is empty, exceeds its line budget or repeats a SKU.
+    """
+    if not isinstance(items, tuple):
+        raise TypeError(f"{name} must be a tuple")
+    if not 1 <= len(items) <= MAX_ORDER_LINES:
+        raise ValueError(f"orders must contain 1 to {MAX_ORDER_LINES} lines")
+    if any(not isinstance(item, item_type) for item in items):
+        raise TypeError(f"{name} must contain {item_type.__name__} instances")
+    if len({item.product_id for item in items}) != len(items):
+        raise ValueError("duplicate product lines are not allowed")
+
+
 @dataclass(frozen=True, slots=True)
 class OrderQuote:
     """An immutable price snapshot, without order acceptance or stock reservation.
@@ -123,14 +207,7 @@ class OrderQuote:
         validate_store_configuration(self.store_id, self.currency)
         validate_identifier(self.catalog_version, "catalog_version")
         validate_identifier(self.price_list_version, "price_list_version")
-        if not isinstance(self.items, tuple):
-            raise TypeError("quoted items must be a tuple")
-        if not 1 <= len(self.items) <= MAX_ORDER_LINES:
-            raise ValueError(f"orders must contain 1 to {MAX_ORDER_LINES} lines")
-        if any(not isinstance(item, QuotedItem) for item in self.items):
-            raise TypeError("quoted items must contain QuotedItem instances")
-        if len({item.product_id for item in self.items}) != len(self.items):
-            raise ValueError("duplicate product lines are not allowed")
+        _validate_items(self.items, QuotedItem, name="quoted items")
         if self.total_cents > MAX_AMOUNT_CENTS:
             raise ValueError("order total exceeds the supported amount range")
 
@@ -179,14 +256,7 @@ class OrderQuote:
             >>> quote.total_cents
             3980
         """
-        if not isinstance(items, tuple):
-            raise TypeError("items must be a tuple")
-        if not 1 <= len(items) <= MAX_ORDER_LINES:
-            raise ValueError(f"orders must contain 1 to {MAX_ORDER_LINES} lines")
-        if any(not isinstance(item, OrderItem) for item in items):
-            raise TypeError("items must contain OrderItem instances")
-        if len({item.product_id for item in items}) != len(items):
-            raise ValueError("duplicate product lines are not allowed")
+        _validate_items(items, OrderItem, name="items")
         if not isinstance(price_list, PriceList):
             raise TypeError("price_list must be a PriceList instance")
 
@@ -206,3 +276,97 @@ class OrderQuote:
             price_list_version=price_list.version,
             items=tuple(quoted),
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Order:
+    """An accepted order snapshot with guarded processing transitions.
+
+    Args:
+        order_id: Server-assigned UUID, suitable for a future PostgreSQL UUID key.
+        buyer_id: Nonempty trusted buyer identifier without surrounding spaces.
+            It identifies ownership but does not perform authorization.
+        quote: Frozen accepted items, prices, currency, store and price versions.
+        accepted_at: Server-assigned, offset-aware acceptance time; normalized
+            to UTC. Persistence must supply the authoritative database time.
+        status: Processing state, defaulting to PENDING. Raw strings are rejected.
+        resolved_at: Offset-aware final-decision time, normalized to UTC. Required
+            for terminal states, absent for PENDING, never before accepted_at.
+        reason: Safe enum code, required for rejection or processing failure.
+            PENDING and CONFIRMED require None.
+
+    Raises:
+        TypeError: A field has an unsupported type.
+        ValueError: An identifier, timestamp or state/reason combination is invalid.
+
+    Constructing this object does not accept an order durably or reserve stock.
+    Terminal construction supports future database rehydration. Resolution is a
+    pure proposal: database state/attempt/deadline guards must authorize its commit.
+    This object provides no locking, HTTP idempotency or event deduplication.
+    """
+
+    order_id: UUID
+    buyer_id: str
+    quote: OrderQuote
+    accepted_at: datetime
+    status: OrderStatus = OrderStatus.PENDING
+    resolved_at: datetime | None = None
+    reason: OrderFailureReason | None = None
+
+    def __post_init__(self) -> None:
+        """Validate identity, frozen quote and coherent lifecycle metadata."""
+        if not isinstance(self.order_id, UUID):
+            raise TypeError("order_id must be a UUID")
+        validate_identifier(self.buyer_id, "buyer_id")
+        if not isinstance(self.quote, OrderQuote):
+            raise TypeError("quote must be an OrderQuote")
+        _validate_resolution(self.status, self.reason)
+        accepted_at = normalize_utc_datetime(self.accepted_at, "accepted_at")
+        object.__setattr__(self, "accepted_at", accepted_at)
+        if self.status is OrderStatus.PENDING:
+            if self.resolved_at is not None:
+                raise ValueError("pending orders cannot have resolved_at")
+        else:
+            resolved_at = normalize_utc_datetime(self.resolved_at, "resolved_at")
+            if resolved_at < accepted_at:
+                raise ValueError("resolved_at must not precede accepted_at")
+            object.__setattr__(self, "resolved_at", resolved_at)
+
+    def resolve(
+        self,
+        status: OrderStatus,
+        *,
+        at: datetime,
+        reason: OrderFailureReason | None = None,
+    ) -> Self:
+        """Propose a terminal processing decision for a pending order.
+
+        Args:
+            status: CONFIRMED, REJECTED or PROCESSING_FAILED enum member.
+            at: Trusted offset-aware decision time, not earlier than acceptance.
+                Future persistence must obtain authoritative database time.
+            reason: BUSINESS_RULE_VIOLATION for rejection, RETRY_EXHAUSTED or
+                RESERVATION_EXPIRED for technical failure, None for confirmation.
+
+        Returns:
+            A new Order retaining identity, buyer, quote and acceptance time.
+            The original is unchanged. No inventory or database writes occur.
+
+        Raises:
+            InvalidOrderTransitionError: The order is terminal or the target is
+                PENDING. Repeated terminal calls also fail; duplicate handling
+                belongs to the future transactional persistence operation.
+            TypeError: Target, timestamp or reason has an unsupported type.
+            ValueError: Reason is incompatible or the decision time is invalid.
+
+        Technical retries do not call this method: the order remains pending.
+        Confirmation keeps stock committed until a later fulfillment operation;
+        it does not acknowledge payment or remove physical units.
+        """
+        if self.status is not OrderStatus.PENDING:
+            raise InvalidOrderTransitionError(
+                "terminal orders cannot be resolved again"
+            )
+        if status is OrderStatus.PENDING:
+            raise InvalidOrderTransitionError("resolution must target a terminal state")
+        return replace(self, status=status, resolved_at=at, reason=reason)

@@ -13,7 +13,7 @@
 
 LabFlow is a public Platform Engineering and SRE lab building an observable order-processing system: buyers place orders against finite inventory, and merchants query confirmed and pending order values. Reproducible API traffic and controlled failures will support operational experiments.
 
-**Running today:** a bounded Python generator, report aggregator, shared product catalogs, store-specific EUR/BRL price lists and quotations, and immutable inventory snapshots. Inventory snapshot validation and availability calculations are verified locally; their remote CI is pending. **Next:** order-linked reservations, atomic persistence, asynchronous order processing and merchant summaries. The [agreed application contract](docs/application-contract.md) defines this target; the order flow is not implemented yet.
+**Running today:** a bounded Python generator, report aggregator, shared product catalogs, store-specific EUR/BRL price lists and quotations, immutable inventory snapshots and accepted-order processing lifecycle rules. Lifecycle rules are verified locally; their remote CI is pending. **Next:** order-linked reservations, atomic persistence, asynchronous order processing and merchant summaries. The [agreed application contract](docs/application-contract.md) defines this target; the order flow is not implemented yet.
 
 <img src="docs/assets/labflow-flow.gif" width="720" alt="Planned order processing after stock reservation: three accepted orders move from a Kafka requests topic to separate worker pods. Compact outcomes return through the results topic in the same Kafka cluster, then a result consumer atomically finalizes orders and inventory in PostgreSQL.">
 
@@ -25,11 +25,12 @@ LabFlow is a public Platform Engineering and SRE lab building an observable orde
 | --- | --- | --- |
 | Deterministic sales generation | Implemented | Seeded generation, bounded inputs and isolated random state |
 | Report aggregation | Implemented | Counts, units and revenue in integer cents; empty-input behavior |
-| Unit tests | 160 cases passed locally | Includes 30 inventory snapshot cases; this inventory slice awaits its own PR CI |
+| Unit tests | 223 cases passed locally | Includes 30 inventory snapshot and 63 lifecycle cases; the lifecycle slice awaits its own PR CI |
 | Python quality checks | Passed locally and in ARM64 CI | Ruff, Black and Pylint |
 | CI and security jobs | Shared gate verified on ARM64 | Python/ShellCheck checks, Gitleaks and OSV-Scanner passed on PR #2 and `main` |
 | Catalogs and quotations | Implemented | Shared product metadata, independent store price lists and versioned EUR/BRL quotations |
-| Inventory read snapshots | Verified locally; remote CI pending | Validated immutable counts and derived availability per store/SKU; no persistence or concurrency control |
+| Inventory read snapshots | Implemented | Validated immutable counts and derived availability per store/SKU; no persistence or concurrency control |
+| Order processing lifecycle | Verified locally; remote CI pending | Frozen accepted quote, UTC timestamps, safe reasons and guarded terminal proposals; no persistence |
 | Order admission, inventory and merchant summaries | Contract agreed; implementation pending | Atomic reservations, asynchronous processing, expiry and idempotent finalization |
 | API, Kafka and PostgreSQL | Planned | Order admission, transactional outbox, event processing and authorized reads |
 | Kubernetes and observability | Planned | Helm, Kustomize, Traefik, Prometheus, Grafana and Alertmanager |
@@ -142,14 +143,14 @@ flowchart TB
 
 1. **Accept and reserve.** The API will resolve prices from the selected store's price list and reserve all order items in the same transaction as the order, processing job and outbox event. It returns `202 Accepted` only after commit. Insufficient stock rejects admission without partial reservations. Replaying an accepted idempotency key returns the existing order without reserving again.
 2. **Process asynchronously.** The outbox publisher sends accepted snapshots to Kafka. Local and future Oracle workers share one request consumer group, check the order and publish compact proposed outcomes before committing input offsets. The animation illustrates three orders/partitions; the first deployment starts with one worker.
-3. **Finalize atomically.** The result consumer updates the official state and resolves the reservation in PostgreSQL before committing result offsets. Confirmation consumes reserved stock; rejection or definitive technical failure releases it. Repeated computation/delivery must not repeat these effects.
-4. **Recover abandoned reservations.** A core recovery task expires overdue pending orders and releases their reservations. Expiry and completion compete through guarded transactions; late outcomes cannot confirm released stock. Deadlines and recovery cadence will be selected and tested during implementation.
+3. **Finalize atomically.** The result consumer updates the official state and resolves the reservation in PostgreSQL before committing result offsets. Confirmation keeps stock committed for later fulfillment without reducing physical units; rejection or definitive technical failure releases the pending hold. Repeated computation/delivery must not repeat these effects.
+4. **Recover abandoned reservations.** A core recovery task expires overdue pending orders and releases their reservations; confirmed commitments are excluded. Expiry and completion compete through guarded transactions; late outcomes cannot confirm released stock. Deadlines and recovery cadence will be selected and tested during implementation.
 5. **Query existing orders.** Buyers poll their own order state. Authorized merchants receive a bounded summary in the same HTTP request, reading PostgreSQL. The period uses server-assigned acceptance time, with an inclusive start and exclusive end. Heavy reports and exports can become asynchronous later.
 
 | Order state | Meaning | Inventory effect |
 | --- | --- | --- |
 | `pending` | Durably accepted; processing or bounded recovery pending | Stock reserved |
-| `confirmed` | Processing completed; payment and fulfillment remain separate | Reservation consumed |
+| `confirmed` | Processing completed; payment and fulfillment remain separate | Stock remains committed until shipment |
 | `rejected` | Business rejection after admission | Reservation released |
 | `processing_failed` | Definitive technical failure or reservation deadline exceeded | Reservation released |
 
@@ -246,8 +247,9 @@ src/labflow/
   store.py                     Store identity and its fixed currency
   catalog.py                   Shared product metadata snapshots
   price_list.py                Store-specific prices and offered SKUs
-  orders.py                    Validated order items and quotations
+  orders.py                    Quotations and accepted-order processing lifecycle
   inventory.py                 Immutable inventory read snapshots and derived availability
+  validation.py                Shared integer validation and UTC normalization
   synthetic.py                 Deterministic sale records
   reporting.py                 Compact report aggregation
 tests/                         Unit and parametrized input tests
