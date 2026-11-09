@@ -9,11 +9,11 @@
 [![Style: Black](https://img.shields.io/badge/style-Black-111827?style=flat-square)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0D9488?style=flat-square)](LICENSE)
 
-[Quick start](#-quick-start) · [How it works](#-how-it-works) · [Quality](#-quality-and-ci) · [Roadmap](#-roadmap) · [Development](docs/development.md)
+[Quick start](#-quick-start) · [How it works](#-how-it-works) · [Application model](src/labflow/README.md) · [Quality](#-quality-and-ci) · [Roadmap](#-roadmap) · [Development](docs/development.md)
 
 LabFlow is a public Platform Engineering and SRE lab building an observable order-processing system: buyers place orders against finite inventory, and merchants query confirmed and pending order values. Reproducible API traffic and controlled failures will support operational experiments.
 
-**Running today:** a bounded Python generator and report aggregator. **Next:** atomic stock reservations, asynchronous order processing and merchant summaries. The [agreed application contract](docs/application-contract.md) defines this target; the order flow is not implemented yet.
+**Running today:** a bounded Python generator, report aggregator, shared product catalogs and store-specific EUR/BRL price lists and quotations. The catalog/quotation slice is verified locally; its remote CI is pending. **Next:** atomic stock reservations, asynchronous order processing and merchant summaries. The [agreed application contract](docs/application-contract.md) defines this target; the order flow is not implemented yet.
 
 <img src="docs/assets/labflow-flow.gif" width="720" alt="Planned order processing after stock reservation: three accepted orders move from a Kafka requests topic to separate worker pods. Compact outcomes return through the results topic in the same Kafka cluster, then a result consumer atomically finalizes orders and inventory in PostgreSQL.">
 
@@ -25,10 +25,11 @@ LabFlow is a public Platform Engineering and SRE lab building an observable orde
 | --- | --- | --- |
 | Deterministic sales generation | Implemented | Seeded generation, bounded inputs and isolated random state |
 | Report aggregation | Implemented | Counts, units and revenue in integer cents; empty-input behavior |
-| Unit tests | Passed locally and in ARM64 CI | 26 pytest cases across 14 functions |
+| Unit tests | 130 cases passed locally; foundation verified in ARM64 CI | The 26-case foundation has remote evidence; catalog/quotation additions await their own PR CI |
 | Python quality checks | Passed locally and in ARM64 CI | Ruff, Black and Pylint |
 | CI and security jobs | Shared gate verified on ARM64 | Python/ShellCheck checks, Gitleaks and OSV-Scanner passed on PR #2 and `main` |
-| Orders, inventory and merchant summaries | Contract agreed; implementation pending | Atomic reservations, asynchronous processing, expiry and idempotent finalization |
+| Catalogs and quotations | Implemented and verified locally; remote CI pending | Shared product metadata, independent store price lists and versioned EUR/BRL quotations |
+| Order admission, inventory and merchant summaries | Contract agreed; implementation pending | Atomic reservations, asynchronous processing, expiry and idempotent finalization |
 | API, Kafka and PostgreSQL | Planned | Order admission, transactional outbox, event processing and authorized reads |
 | Kubernetes and observability | Planned | Helm, Kustomize, Traefik, Prometheus, Grafana and Alertmanager |
 | GitOps and remote capacity | Later milestones | Argo CD, GHCR and Oracle-hosted workers |
@@ -138,7 +139,7 @@ flowchart TB
     class extra future
 ```
 
-1. **Accept and reserve.** The API will resolve catalog prices and reserve all order items in the same transaction as the order, processing job and outbox event. It returns `202 Accepted` only after commit. Insufficient stock rejects admission without partial reservations. Replaying an accepted idempotency key returns the existing order without reserving again.
+1. **Accept and reserve.** The API will resolve prices from the selected store's price list and reserve all order items in the same transaction as the order, processing job and outbox event. It returns `202 Accepted` only after commit. Insufficient stock rejects admission without partial reservations. Replaying an accepted idempotency key returns the existing order without reserving again.
 2. **Process asynchronously.** The outbox publisher sends accepted snapshots to Kafka. Local and future Oracle workers share one request consumer group, check the order and publish compact proposed outcomes before committing input offsets. The animation illustrates three orders/partitions; the first deployment starts with one worker.
 3. **Finalize atomically.** The result consumer updates the official state and resolves the reservation in PostgreSQL before committing result offsets. Confirmation consumes reserved stock; rejection or definitive technical failure releases it. Repeated computation/delivery must not repeat these effects.
 4. **Recover abandoned reservations.** A core recovery task expires overdue pending orders and releases their reservations. Expiry and completion compete through guarded transactions; late outcomes cannot confirm released stock. Deadlines and recovery cadence will be selected and tested during implementation.
@@ -239,6 +240,12 @@ docs/
 Makefile                       Developer setup and quality commands
 .pre-commit-config.yaml         Shared commit and CI checks
 src/labflow/
+  README.md                    Class relationships and animated pricing example
+  currency.py                  Explicit supported currency codes
+  store.py                     Store identity and its fixed currency
+  catalog.py                   Shared product metadata snapshots
+  price_list.py                Store-specific prices and offered SKUs
+  orders.py                    Validated order items and quotations
   synthetic.py                 Deterministic sale records
   reporting.py                 Compact report aggregation
 tests/                         Unit and parametrized input tests
