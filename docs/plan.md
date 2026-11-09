@@ -1,6 +1,6 @@
 # LabFlow Implementation Plan
 
-Status: M0 and the M1 reporting foundation are complete, including successful PR and main CI runs for the shared quality gate. M2-M5 have not started. Updated 2026-11-08 with basic CI, operational autoscaling, and explicit Kustomize learning requirements.
+Status: M0 and the M1 calculation foundation are complete, including successful PR and main CI runs for the shared quality gate. M2-M5 have not started. Updated 2026-11-09: confirmed scope includes finite-stock reservation at buyer admission, asynchronous orders through the API/events and merchant summaries by period, showing confirmed and pending amounts separately plus their combined total; payments are deferred. The [agreed application contract](application-contract.md) replaces the seed-driven report-request model.
 
 ## Purpose and Working Agreement
 
@@ -12,23 +12,31 @@ The initial twenty-hour allocation is a planning estimate. At that checkpoint, l
 
 ## Confirmed Architecture
 
-The Mac hosts the application core: FastAPI, Kafka, PostgreSQL, local workers, the outbox publisher, the result consumer, Traefik, and observability. Argo CD enters after the initial local demonstration. Oracle later hosts K3s, additional workers, and their instrumentation, connected through Tailscale.
+The Mac hosts the application core: FastAPI, Kafka, PostgreSQL, local order workers, the outbox publisher, the result consumer, reservation recovery task, Traefik, and observability. Argo CD enters after the initial local demonstration. Oracle later hosts K3s, additional order workers, and their instrumentation, connected through Tailscale.
+
+Buyers submit orders; merchants query confirmed/pending order values from existing orders. Order processing is asynchronous. The initial bounded order-value summary is a database read through the API, not a request to generate sales or a second worker pipeline. API interfaces and recognition rules are defined in the application contract.
 
 ```mermaid
 flowchart LR
-    Client[Client / load generator] --> Ingress[Traefik / TLS]
-    subgraph Core[Mac / Minikube]
+    Buyers[Buyers / order traffic] --> Ingress[Traefik / TLS]
+    Merchants[Merchants / order-summary queries] --> Ingress
+    subgraph Core[Kubernetes / Minikube on the Mac]
         Ingress --> API[FastAPI]
-        API -->|Atomic job + outbox write| DB[(PostgreSQL)]
+        API -->|Stock reservation + order + job + outbox / summary reads| DB[(PostgreSQL)]
         DB -->|Pending outbox events| Relay[Outbox publisher]
-        Relay --> Jobs[Kafka jobs topic]
-        Jobs --> Workers[Local workers]
-        Workers --> Results[Kafka results topic]
+        subgraph Kafka[One Kafka cluster]
+            Jobs[Order requests topic]
+            Results[Order results topic]
+        end
+        Relay --> Jobs
+        Jobs --> Workers[Order worker pods]
+        Workers --> Results
         Results --> Writer[Result consumer]
-        Writer -->|Authoritative result transaction| DB
+        Writer -->|Atomic order + inventory finalization| DB
+        Recovery[Reservation recovery task] -->|Expire and release atomically| DB
     end
-    subgraph Remote[Oracle / later]
-        RemoteWorkers[K3s workers]
+    subgraph Remote[Later / Kubernetes K3s on Oracle]
+        RemoteWorkers[Additional order workers]
     end
     Jobs -.->|Private consumption| RemoteWorkers
     RemoteWorkers -.->|Compact results| Results
@@ -42,18 +50,20 @@ FastAPI's documented API is the initial user interface; Grafana is the operation
 
 ## Data and Processing Contract
 
-- Submit a seed, generator version, row count, and bounded processing-cost parameters. Generate data inside workers rather than transporting large datasets through Kafka. Persist enough versioned input to reproduce processing.
+- Buyers submit store/product identifiers and quantities. The API atomically reserves all items and freezes trusted catalog prices and a versioned, bounded order snapshot. Workers validate/process that snapshot and return compact outcomes. Seeds belong to the API load generator, not public order or revenue inputs; workers no longer generate purchases.
+- Merchant summaries select an authorized store and an offset-aware time interval. Return confirmed final amounts, pending frozen quotes, their combined total, status counts and currency. The agreed filter uses acceptance time in `[from, to)`. A successful order moves value between buckets without increasing the combined total; rejected and technically failed amounts are excluded. Payments are deferred; see the application contract.
 - Limit total computation, concurrent work, pending jobs, execution duration, and event/result sizes. Protect resources on both admission and execution paths.
 - Use a job identifier, scoped idempotency key, canonical input fingerprint, event identifier, and attempt identifier. A repeated key with the same input returns the existing job; different input is a conflict.
-- Initial official transitions are `accepted -> succeeded` or `accepted -> failed`. Terminal states do not regress. Attempt records carry execution details; stale attempts cannot overwrite a newer resolution.
-- Accept a job and its outbox event in one PostgreSQL transaction. A database commit followed by a separate Kafka publish would otherwise leave a failure window with a job but no event.
+- Public order transitions are `pending -> confirmed | rejected | processing_failed`; business rejection differs from technical failure. Pending orders hold reservations. Internal jobs and attempts must preserve these distinct outcomes. Terminal states do not regress. Attempt records carry execution details; stale attempts cannot overwrite a newer resolution.
+- Reserve all inventory items and accept the order, its processing job and its outbox event in one PostgreSQL transaction. A database commit followed by a separate Kafka publish would otherwise leave a failure window with a durable order but no event.
 - The outbox publisher marks an event sent only after Kafka acknowledgement. A crash between acknowledgement and marking can republish the event.
 - Workers publish an outcome durably before committing input offsets. The result consumer commits its PostgreSQL transaction before committing result offsets. Never advance a partition offset past unfinished messages.
 - Deduplicate events and final effects transactionally, using database constraints and attempt/state checks. Repeated computation is allowed; duplicate authoritative results are not. Do not claim system-wide exactly-once processing.
-- Track retry counts and scheduling durably, with bounded attempts and backoff. The result consumer can schedule the next attempt through an outbox entry in the same transaction as the attempt resolution. Permanent or exhausted processing failures become terminal; malformed events require quarantine and an explicit replay procedure.
+- Track retry counts and scheduling durably, with bounded logical attempts, backoff and jitter; redelivery can re-execute the same logical attempt. The result consumer can schedule the next attempt through an outbox entry in the same transaction as the attempt resolution. Permanent or exhausted processing failures become terminal; malformed events require quarantine and an explicit replay procedure.
+- Confirmation consumes the reservation; rejection or definitive failure releases it, atomically with guarded terminal state. Durable deadlines and a core recovery task resolve expired reservations; late results cannot confirm after release. Inventory stays in PostgreSQL, unavailable to workers. Replenishment endpoints and payments are later extensions.
 - A transport outage leaves publication or consumption pending. It does not authorize acknowledging an unpersisted result. Define handling for repeatedly crashing or stuck attempts before claiming bounded recovery.
 
-Tests must cover repeated API submissions, conflicting idempotency keys, concurrent duplicate results, stale attempt events, bounded retries, and crashes around outbox publication, worker acknowledgement, and result persistence. The most dangerous windows must be reproduced against real PostgreSQL and Kafka. [Kafka delivery semantics](https://github.com/apache/kafka/blob/trunk/docs/design/design.md)
+Tests must cover concurrent reservation of the last units, multi-item rollback, reservation release/expiry and late-result races, repeated order submissions, conflicting idempotency keys, stable accepted prices, concurrent duplicate results, stale attempt events, bounded retries, and crashes around outbox publication, worker acknowledgement, and result persistence. Merchant-summary tests cover store authorization, time boundaries, confirmed/pending bucket transitions, failed-amount exclusion and unchanged amounts/counts after duplicate delivery. The most dangerous windows must be reproduced against real PostgreSQL and Kafka. [Kafka delivery semantics](https://github.com/apache/kafka/blob/trunk/docs/design/design.md)
 
 ## Resource Ownership and Kustomize Learning
 
@@ -94,12 +104,14 @@ All time allocations below are estimates, not elapsed time or delivery promises.
 | --- | ---: | --- |
 | M0: plan and preflight | 2 h | Approved scope recorded; essential host/storage and first-code tool checks completed; component-specific runtime/capacity checks assigned to their execution stages |
 | M1: first Python slice and basic CI | 2 h | Bounded deterministic generator; documented lint/tests; verified GitHub Actions checks on a PR and the resulting main commit |
-| M2: reliable asynchronous flow | 5 h | API, outbox, real PostgreSQL/Kafka integration, worker and result persistence; critical failure-window and idempotency tests pass |
+| M2: orders, inventory and summaries | Original 5 h estimate; reassess | Order API/state/price snapshots, atomic inventory reservation/resolution and expiry, outbox, real PostgreSQL/Kafka integration, worker/result persistence, authorized order-summary queries and failure-window tests |
 | M3: local Kubernetes operation | 4 h | ARM64 execution, Helm infrastructure, both Kustomize overlays rendered and compared, persistent data, probes, resources and network isolation verified |
 | M4: baseline and duplicate-delivery experiment | 3 h | Useful dashboards, initial actionable private/local alert, baseline and duplicate-delivery evidence, result correctness checked |
 | M5: operational CPU autoscaling | 3 h | Controlled traffic increase produces observed HPA scale-out and available workers; CPU, lag and completion behavior compared and explained |
 | Contingency | 1 h | Resolve failures or record remaining work accurately |
 | Total review budget | 20 h | Review every gate; extend the schedule if required |
+
+The M2 estimate predates the two-actor and reservation contract and is not a new delivery commitment. Implement order calculations first, API/database order admission and summary reads second, and the event pipeline third. Reassess the remaining work after the first slice; retain both operational experiment gates.
 
 Current progress: M0 and the M1 reporting foundation are complete. The bounded `sales-v1` generator and report aggregation have 26 passing pytest cases across 14 functions. The shared quality gate passed [PR CI](https://github.com/thiagogenez/labflow/actions/runs/42521136229) and [main CI](https://github.com/thiagogenez/labflow/actions/runs/42521372612) at `2ff07d8`, including native Linux ARM64 execution, ShellCheck, Python quality checks, Gitleaks and dependency auditing. These runs cover the reporting foundation and shared quality gate; later changes require their own validation. M2-M5 have not started. Exact stack consumption will be measured during component execution.
 
@@ -117,29 +129,31 @@ Provide suitable startup, readiness, and liveness probes; requests/limits; names
 
 Traefik implements Ingress HTTP routing and TLS; Services identify application backends. Broker, database, and administrative interfaces remain local or private. Initial secrets are generated outside Git with separate responsibilities and fictitious examples. Verify encryption at rest; base64 encoding alone provides no confidentiality.
 
-Measure HTTP requests/errors/latency; jobs accepted/completed/failed; queue wait and total completion time; processing duration/throughput; retries/duplicates; consumer lag; CPU, memory, throttling, OOM and restarts; desired/available/pending replicas; and broker/database health. Use structured correlation logs and bounded metric labels; never use job IDs as metric labels.
+Measure HTTP requests/errors/latency by operation; orders and processing jobs accepted/completed/failed; pending age, queue wait and total completion time; processing duration/throughput; retries/duplicates; consumer lag; CPU, memory, throttling, OOM and restarts; desired/available/pending replicas; and broker/database health. Track summary-query latency and pending-order count/value separately; the combined amount does not establish processing health. Use structured correlation logs and bounded metric labels; never use order/job/buyer IDs as metric labels.
 
 Application code and exporters produce metrics; Prometheus collects and evaluates rules; Grafana queries; Alertmanager groups, silences, and routes actionable alerts to a local/private receiver. Select SLO targets and windows after the baseline. Include accepted jobs that remain pending in completion SLIs; a short test is not monthly availability history.
 
 ## Mandatory Experiment A: Duplicate Delivery
 
-Hypothesis: a result-consumer crash after PostgreSQL commit but before Kafka offset commit causes re-delivery while preserving one authoritative result per job.
+Hypothesis: a result-consumer crash after PostgreSQL commit but before Kafka offset commit causes re-delivery while preserving one authoritative result per order and unchanged merchant order values and inventory.
 
-1. Calibrate bounded synthetic work; record seeds, generator version, input size, images, resource settings, and Kafka configuration.
-2. Proposed initial run: 100 unique jobs over 60 seconds, plus 10 API re-submissions with their original idempotency keys. Fix a drain timeout after calibration; it is an experiment limit, not an SLO.
+1. Calibrate bounded order traffic; record the request-generator seed/version, catalog version, basket sizes, input trace, images, resources and Kafka configuration.
+2. Proposed initial run: 100 unique valid orders over 60 seconds with sufficient finite initial stock, plus 10 API re-submissions with their original idempotency keys. Fix a drain timeout after calibration; it is an experiment limit, not an SLO.
 3. Capture a baseline, then reproduce the same workload with a one-shot failure point at the specified commit boundary.
-4. Restart the consumer and prove re-delivery through event/attempt correlation and offset evidence. Confirm unchanged deterministic results, 100 unique jobs, and exactly one final result for each successful job in PostgreSQL.
+4. Restart the consumer and prove re-delivery through event/attempt correlation and offset evidence. Confirm 100 unique orders and processing jobs, one final result per order, exactly one inventory consumption per confirmed order, no retained terminal reservations, correct totals from accepted price snapshots, correct pending-to-confirmed movements, and no duplicate contribution to any merchant-summary amount or count.
 5. Compare completion time, throughput, lag, retries, duplicate suppression, and resources. Explain recovery and the preventive role of the transaction and constraints.
 
-Pass requires actual failure/re-delivery evidence, a database correctness check, and all 100 valid-input jobs completing successfully within the declared drain window. HTTP idempotency alone does not prove consumer deduplication. Unexpected failures or timeouts fail this run and must be reported, not removed from the dataset.
+Pass requires actual failure/re-delivery evidence, database, inventory and summary correctness checks, and all 100 valid orders completing successfully within the declared drain window. HTTP idempotency alone does not prove consumer deduplication. Unexpected failures or timeouts fail this run and must be reported, not removed from the dataset.
 
 ## Mandatory Experiment B: CPU Autoscaling
 
 Hypothesis: with CPU-bound workers, spare cluster capacity, and enough Kafka partitions, sustained additional job traffic increases worker CPU and backlog and causes the HPA to add workers. Any throughput or latency improvement remains a measurement, not a promise.
 
+The workload now processes bounded order snapshots. First establish whether it becomes CPU-limited under safe buyer traffic. Keep merchant-query load fixed during the HPA comparison, then study it separately as database pressure. Do not assume simple order arithmetic is expensive or introduce busy loops to force scale-out; if prerequisites are not met, record this gate as pending and investigate the measured bottleneck.
+
 1. Verify Metrics Server, CPU requests, sufficient Kafka partitions, available CPU/memory, quotas, and application cost limits. Initially propose a one-to-two worker range, subject to preflight and calibration.
 2. Use a low arrival rate to establish CPU, lag, and job-completion measurements. Choose the HPA target and observation windows from calibration; record them before the comparison.
-3. Increase HTTP job submissions while holding per-job input/cost fixed. First measure a fixed-worker control with HPA disabled and the same worker configuration used by the autoscaling profile; then repeat the same load phases with HPA enabled. Record the effective manifests and keep per-worker resources identical between these runs. Start each comparison from a drained queue.
+3. Increase buyer order submissions while holding the basket-size distribution, processing rules and merchant-query traffic fixed. First measure a fixed-worker control with HPA disabled and the same worker configuration used by the autoscaling profile; then repeat the same load phases with HPA enabled. Record the effective manifests and keep per-worker resources identical between these runs. Record initial/remaining/reserved inventory; ensure sufficient stock for the accepted-load target. Start each comparison from a drained queue and reset/isolate business data so earlier orders cannot distort summary checks.
 4. Record HPA conditions/current/target CPU, desired and available replicas, pod readiness/scheduling, partition assignments, backlog, throughput, completion latency, throttling, memory, and restarts.
 5. Prove the scale-out occurred and the additional worker received work. Reduce traffic, observe stabilization/recovery, and explain the measured comparison and any limits or competing bottlenecks.
 
