@@ -30,7 +30,7 @@ class TextStyle:
 
 @dataclass(frozen=True)
 class WorkerLane:
-    """One distinct example job, its assigned worker and its result color."""
+    """One distinct example order, its assigned worker and its result color."""
 
     number: int
     center_y: int
@@ -102,7 +102,7 @@ def packet(
     *,
     compact: bool = False,
 ) -> None:
-    """Keep each job's color through computation and compact result delivery."""
+    """Keep each order's color through computation and compact result delivery."""
     x, y = point_on_path(path, fraction)
     radius = 5 if compact else 8
     draw.rounded_rectangle(
@@ -112,19 +112,19 @@ def packet(
 
 def infrastructure(draw: ImageDraw.ImageDraw) -> None:
     """Show topics, the result consumer and the authoritative database."""
-    text(draw, (24, 22), "Planned worker flow", TextStyle(28))
+    text(draw, (24, 22), "Planned order processing", TextStyle(28))
     text(draw, (646, 30), "KUBERNETES", TextStyle(18, MUTED, 170))
-    text(draw, (24, 91), "Kafka", TextStyle(22, MUTED, 104))
+    text(draw, (24, 91), "Kafka topic", TextStyle(18, MUTED, 104))
     draw.rounded_rectangle((24, 128, 128, 249), radius=8, fill=SURFACE, outline=LINE)
-    text(draw, (40, 140), "jobs", TextStyle(24, TEXT, 78))
+    text(draw, (40, 140), "requests", TextStyle(18, TEXT, 78))
     for lane in WORKERS:
         top = 174 + (lane.number - 1) * 24
         draw.rounded_rectangle((36, top - 7, 116, top + 12), radius=4, outline=LINE)
         text(draw, (44, top - 5), f"p{lane.number - 1}", TextStyle(15, lane.color, 60))
 
     text(draw, (224, 65), "Worker pods", TextStyle(22, TEXT, 154))
-    text(draw, (224, 92), "generate + compute", TextStyle(16, MUTED, 154))
-    text(draw, (462, 117), "Kafka", TextStyle(22, MUTED, 104))
+    text(draw, (224, 92), "check order", TextStyle(16, MUTED, 154))
+    text(draw, (462, 117), "Kafka topic", TextStyle(18, MUTED, 104))
     draw.rounded_rectangle((462, 153, 566, 211), radius=8, fill=SURFACE, outline=LINE)
     text(draw, (472, 170), "results", TextStyle(23, TEXT, 84))
 
@@ -138,17 +138,24 @@ def infrastructure(draw: ImageDraw.ImageDraw) -> None:
     draw.rectangle((754, 162, 818, 204), fill=SURFACE, outline=LINE)
     draw.ellipse((754, 194, 818, 214), fill=SURFACE, outline=LINE)
     draw.ellipse((754, 152, 818, 172), fill=SURFACE, outline=LINE)
-    text(draw, (724, 230), "official state", TextStyle(16, MUTED, 100))
+    text(draw, (724, 230), "order + stock", TextStyle(15, MUTED, 100))
+    text(draw, (616, 230), "finalize", TextStyle(16, MUTED, 90))
     text(
         draw,
-        (24, 286),
-        "3 example jobs / partitions · one consumer group · compact results",
-        TextStyle(20, MUTED),
+        (24, 264),
+        "API reserves stock before publishing accepted orders.",
+        TextStyle(17, MUTED),
+    )
+    text(
+        draw,
+        (24, 289),
+        "One Kafka cluster · requests + results · 3 example orders",
+        TextStyle(18, MUTED),
     )
 
 
 def worker(draw: ImageDraw.ImageDraw, lane: WorkerLane, progress: float) -> None:
-    """Illustrate a distinct job entering, computing and leaving one worker."""
+    """Illustrate a distinct order entering, computing and leaving one worker."""
     phase = progress * 1.2 - (lane.number - 1) * 0.12
     source_y = 174 + (lane.number - 1) * 24
     incoming = (
@@ -192,7 +199,7 @@ def worker(draw: ImageDraw.ImageDraw, lane: WorkerLane, progress: float) -> None
 
 
 def frame(progress: float) -> Image.Image:
-    """Compose three concurrent example jobs without implying live execution."""
+    """Compose three concurrent example orders without implying live execution."""
     image = Image.new("RGB", SIZE, BACKGROUND)
     draw = ImageDraw.Draw(image)
     draw.rounded_rectangle((0, 0, SIZE[0] - 1, SIZE[1] - 1), radius=12, outline=LINE)
@@ -222,7 +229,7 @@ def main() -> None:
         loop=0,
         optimize=True,
         disposal=1,
-        comment=b"Planned worker flow: three illustrative jobs, not a runtime trace.",
+        comment=b"Illustrative accepted orders; not a runtime trace.",
     )
     print("Rendered docs/assets/labflow-flow.gif and labflow-flow.png")
 

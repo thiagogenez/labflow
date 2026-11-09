@@ -1,6 +1,6 @@
 # LabFlow
 
-**Reproducible workloads. Compact results. Observable operations.**
+**Orders. Finite inventory. Observable operations.**
 
 [![CI](https://github.com/thiagogenez/labflow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/thiagogenez/labflow/actions/workflows/ci.yml)
 [![Python 3.14](https://img.shields.io/badge/Python-3.14-3776AB?style=flat-square&logo=python&logoColor=white)](pyproject.toml)
@@ -11,13 +11,13 @@
 
 [Quick start](#-quick-start) · [How it works](#-how-it-works) · [Quality](#-quality-and-ci) · [Roadmap](#-roadmap) · [Development](docs/development.md)
 
-LabFlow turns reproducible synthetic sales into compact reports. It is a public Platform Engineering and SRE lab for learning to operate asynchronous workloads, investigate failures and measure recovery.
+LabFlow is a public Platform Engineering and SRE lab building an observable order-processing system: buyers place orders against finite inventory, and merchants query confirmed and pending order values. Reproducible API traffic and controlled failures will support operational experiments.
 
-**Running today:** a bounded Python generator and report aggregator. **Next:** durable jobs, asynchronous processing and observable Kubernetes operations.
+**Running today:** a bounded Python generator and report aggregator. **Next:** atomic stock reservations, asynchronous order processing and merchant summaries. The [agreed application contract](docs/application-contract.md) defines this target; the order flow is not implemented yet.
 
-<img src="docs/assets/labflow-flow.gif" width="720" alt="Planned Kubernetes worker flow: three distinct jobs from Kafka partitions go to three worker pods. Each worker generates data and computes a compact result, which returns through Kafka to the result consumer and PostgreSQL.">
+<img src="docs/assets/labflow-flow.gif" width="720" alt="Planned order processing after stock reservation: three accepted orders move from a Kafka requests topic to separate worker pods. Compact outcomes return through the results topic in the same Kafka cluster, then a result consumer atomically finalizes orders and inventory in PostgreSQL.">
 
-*Planned processing flow, illustrated with three jobs and worker pods. Jobs and results are topics in the same Kafka cluster; motion does not represent measured performance. [Static diagram](docs/assets/labflow-flow.png).*
+*Planned processing after the API reserves stock and commits the order and outbox. Requests and results are topics in one Kafka cluster; three colors identify distinct orders, not repeated copies. Motion is an illustration, not measured performance. [Static diagram](docs/assets/labflow-flow.png).*
 
 ## 🧪 Current capabilities
 
@@ -28,7 +28,8 @@ LabFlow turns reproducible synthetic sales into compact reports. It is a public 
 | Unit tests | Passed locally and in ARM64 CI | 26 pytest cases across 14 functions |
 | Python quality checks | Passed locally and in ARM64 CI | Ruff, Black and Pylint |
 | CI and security jobs | Shared gate verified on ARM64 | Python/ShellCheck checks, Gitleaks and OSV-Scanner passed on PR #2 and `main` |
-| API, Kafka and PostgreSQL | Planned | Job lifecycle, transactional outbox and result persistence |
+| Orders, inventory and merchant summaries | Contract agreed; implementation pending | Atomic reservations, asynchronous processing, expiry and idempotent finalization |
+| API, Kafka and PostgreSQL | Planned | Order admission, transactional outbox, event processing and authorized reads |
 | Kubernetes and observability | Planned | Helm, Kustomize, Traefik, Prometheus, Grafana and Alertmanager |
 | GitOps and remote capacity | Later milestones | Argo CD, GHCR and Oracle-hosted workers |
 
@@ -44,7 +45,7 @@ cd labflow
 make setup
 ```
 
-Generate a reproducible dataset and calculate its report using the project environment:
+Exercise the existing calculation foundation using the project environment. This example generates synthetic sale rows; it does not place orders or modify stock:
 
 ```bash
 .venv/bin/python - <<'PY'
@@ -86,64 +87,73 @@ Run the test suite from the repository root:
 2. **Calculate:** each sale exposes `total_cents = quantity × unit_price_cents`. [`summarize_sales`](src/labflow/reporting.py) counts sales, adds units and sums those totals.
 3. **Return:** the caller receives a dictionary containing three integers. There is no API, queue or database in this execution path yet.
 
-These functions will execute inside each worker. The quick start exercises them directly; the animation previews the future distributed processing path.
+The quick start exercises the existing calculation foundation directly. Sale rows are not order entities. The new order path will use catalog prices and accepted order snapshots; workers will not generate purchases. Reproducibility seeds belong to the traffic generator, outside buyer and merchant interfaces.
 
-### Target: durable, asynchronous jobs
+### Target: reserved stock and asynchronous orders
 
 **Planned architecture.** Kubernetes will run the application core in **Minikube on the Mac**. A separate **K3s cluster on an Oracle ARM VM** will add workers later. These services and clusters are not implemented yet.
 
 ```mermaid
 flowchart TB
-    client["Client / load generator"]
+    buyer["Buyer / order traffic"]
+    merchant["Merchant / summary queries"]
 
-    subgraph core["Kubernetes cluster · Minikube / Mac"]
-        subgraph entry["HTTP entry"]
-            ingress["Traefik<br/>Ingress controller + TLS"]
-            api_service["API Service"]
-            api["FastAPI pods<br/>Deployment"]
-            ingress --> api_service --> api
-        end
+    subgraph core["Kubernetes · Minikube / Mac"]
+        ingress["Traefik · Ingress controller / TLS"]
+        api_service["API Service"]
+        api["FastAPI pods · Deployment"]
+        ingress --> api_service --> api
+        db[("PostgreSQL · PVC<br/>orders / inventory / reservations / outbox")]
+        kafka[("One Kafka cluster · PVC<br/>order requests + order results topics")]
+        relay["Outbox publisher · Deployment"]
+        worker["Order worker pods · Deployment<br/>check snapshot / compute outcome"]
+        writer["Result consumer · Deployment"]
+        recovery["Reservation recovery task<br/>expire overdue pending orders"]
 
-        subgraph storage["Persistent services"]
-            db[("PostgreSQL<br/>official state · PVC")]
-            kafka[("Kafka<br/>jobs + results topics · PVC")]
-        end
-
-        relay["Outbox publisher<br/>Deployment"]
-        worker["Worker pods<br/>Deployment · generate + compute"]
-        writer["Result consumer<br/>Deployment"]
-
-        api -->|"job + outbox transaction / status queries"| db
+        api -->|"reserve + order + job + outbox"| db
+        api <-->|"authorized status / summary reads"| db
         db -->|"committed outbox"| relay
-        relay -->|"publish jobs"| kafka
-        kafka -->|"consume job partitions"| worker
-        worker -->|"publish compact results"| kafka
-        kafka -->|"consume results"| writer
-        writer -->|"deduplicate + persist"| db
+        relay -->|"order requests"| kafka
+        kafka -->|"request partitions / one worker group"| worker
+        worker -->|"compact proposed outcomes"| kafka
+        kafka -->|"results / separate consumer group"| writer
+        writer -->|"deduplicate + finalize + inventory"| db
+        recovery -->|"expire + release atomically"| db
     end
 
-    client <-->|"HTTPS · submit job / query result"| ingress
+    buyer <-->|"HTTPS / submit order / poll status"| ingress
+    merchant <-->|"HTTPS / order summary by acceptance period"| ingress
 
     subgraph remote["Later · Kubernetes / K3s on Oracle ARM"]
-        extra["Additional worker pods<br/>Deployment"]
+        extra["Additional order worker pods"]
     end
-
-    kafka -.->|"Tailscale · consume jobs"| extra
-    extra -.->|"Tailscale · publish results"| kafka
+    kafka -.->|"Tailscale / consume requests"| extra
+    extra -.->|"Tailscale / publish outcomes"| kafka
 
     classDef service fill:#eff6ff,stroke:#2563eb,color:#172554
     classDef data fill:#ecfdf5,stroke:#0d9488,color:#134e4a
     classDef future fill:#faf5ff,stroke:#9333ea,color:#581c87,stroke-dasharray:5 5
-    class api,relay,worker,writer,ingress,api_service service
+    class api,relay,worker,writer,recovery,ingress,api_service service
     class db,kafka data
     class extra future
 ```
 
-1. **Accept a job.** The API will record the job and its outbox event in one PostgreSQL transaction, then return a job identifier. Polling will read status and results from PostgreSQL.
-2. **Publish the work.** The outbox publisher will send committed events to Kafka. A crash after publishing can cause redelivery; accepted jobs must not silently disappear between the database write and publication.
-3. **Distribute jobs across workers.** Kafka will assign job partitions across pods in one worker consumer group. Each worker will generate its dataset from small, versioned inputs and calculate the report locally. The animation shows three partitions and three workers as an example; the first deployment starts with one worker.
-4. **Return the outcome.** Workers will publish a result before committing their input offsets. Local and future Oracle workers will share the same job consumer group.
-5. **Persist once.** The result consumer will deduplicate final effects in PostgreSQL before committing result offsets. Computation may repeat; system-wide exactly-once processing is not a guarantee.
+1. **Accept and reserve.** The API will resolve catalog prices and reserve all order items in the same transaction as the order, processing job and outbox event. It returns `202 Accepted` only after commit. Insufficient stock rejects admission without partial reservations. Replaying an accepted idempotency key returns the existing order without reserving again.
+2. **Process asynchronously.** The outbox publisher sends accepted snapshots to Kafka. Local and future Oracle workers share one request consumer group, check the order and publish compact proposed outcomes before committing input offsets. The animation illustrates three orders/partitions; the first deployment starts with one worker.
+3. **Finalize atomically.** The result consumer updates the official state and resolves the reservation in PostgreSQL before committing result offsets. Confirmation consumes reserved stock; rejection or definitive technical failure releases it. Repeated computation/delivery must not repeat these effects.
+4. **Recover abandoned reservations.** A core recovery task expires overdue pending orders and releases their reservations. Expiry and completion compete through guarded transactions; late outcomes cannot confirm released stock. Deadlines and recovery cadence will be selected and tested during implementation.
+5. **Query existing orders.** Buyers poll their own order state. Authorized merchants receive a bounded summary in the same HTTP request, reading PostgreSQL. The period uses server-assigned acceptance time, with an inclusive start and exclusive end. Heavy reports and exports can become asynchronous later.
+
+| Order state | Meaning | Inventory effect |
+| --- | --- | --- |
+| `pending` | Durably accepted; processing or bounded recovery pending | Stock reserved |
+| `confirmed` | Processing completed; payment and fulfillment remain separate | Reservation consumed |
+| `rejected` | Business rejection after admission | Reservation released |
+| `processing_failed` | Definitive technical failure or reservation deadline exceeded | Reservation released |
+
+**Merchant values are not payments received.** Show confirmed and pending amounts/counts separately, plus their combined amount; rejected and technically failed orders are excluded from that amount. Confirmation moves value between buckets without adding it again. A past period reflects current order states when queried again. Stock-replenishment endpoints and payments are later extensions.
+
+**Example:** with ten pieces and three concurrent requests for five, two can reserve successfully and one is refused at admission, absent intervening stock changes. Restarting services must not replenish initial inventory. See the [full contract](docs/application-contract.md) for proposed interfaces, inventory invariants, failure windows and acceptance tests.
 
 Oracle workers will have no direct database access. Tailscale will connect the environments privately; Kafka, PostgreSQL and administrative interfaces will not be exposed directly to the internet. One Mac remains one physical failure domain.
 
@@ -152,7 +162,7 @@ Oracle workers will have no direct database access. Tailscale will connect the e
 | Responsibility | Planned resources and behavior |
 | --- | --- |
 | HTTP routing | An Ingress defines routing and TLS configuration. Traefik is its controller; the API Service selects ready FastAPI pods. |
-| Application lifecycle | Deployments manage API, publisher, worker and result-consumer pods, with health probes, resource requests and limits. |
+| Application lifecycle | Deployments manage API, publisher, worker and result-consumer pods; the core also runs reservation recovery, with health probes, resource requests and limits. |
 | Persistent data | PostgreSQL and Kafka use PersistentVolumeClaims (PVCs). Provisioner behavior must be checked before multinode experiments; local volumes do not provide independent-host recovery. |
 | Isolation | Namespaces, ResourceQuota, LimitRange, ServiceAccounts/RBAC and NetworkPolicies enforced by the selected CNI. |
 | Worker autoscaling | Metrics Server → resource metrics API → CPU HPA → worker Deployment replica count. CPU requests define the utilization baseline. |
@@ -165,9 +175,10 @@ These are implementation and experiment requirements for the distributed milesto
 
 | Concern | Intended mechanism | Required verification |
 | --- | --- | --- |
-| Job admission | Job and outbox event in one database transaction | Crash around publication without silently dropping accepted work |
-| Duplicate delivery | At-least-once processing with transactional result deduplication | Redeliver a result after a database commit and verify one authoritative result |
-| Retries | Durable attempt state, bounded retries and backoff | Exhaustion, stale attempts and malformed events |
+| Order admission | Reserve all items and record order/job/outbox in one transaction | Concurrent last-unit requests, multi-item rollback and HTTP retries |
+| Duplicate delivery | At-least-once processing with transactional result deduplication | Redeliver a result after a database commit and verify unchanged order counts, stock and summary values |
+| Retries | Durable logical attempts, bounded retries, backoff and jitter | Redelivery versus a new attempt, exhaustion and stale outcomes |
+| Reservation recovery | Durable deadlines and guarded expiry/confirmation | Release after failure, expiry races and late-result suppression |
 | Scaling | CPU-based HPA with Metrics Server and sufficient Kafka partitions | Observe additional available workers receiving work under controlled load |
 | Resource sharing | Requests, limits, quotas and admission bounds | Measure pressure, backlog and competing workloads |
 | Recovery | Off-Mac backups, restore procedures and fencing | Measure data loss, duplicate effects, RPO and RTO |
@@ -176,7 +187,7 @@ The initial deployment has a single physical host. High availability, provider-l
 
 ### Observability and delivery
 
-Planned observability follows a clear path: application and infrastructure metrics → **Prometheus** → **Grafana dashboards** and **Alertmanager notifications**. Experiments will correlate CPU, memory, restarts, queue lag, throughput and job-completion latency. Job identifiers belong in logs; metric labels remain bounded.
+Planned observability follows a clear path: application and infrastructure metrics → **Prometheus** → **Grafana dashboards** and **Alertmanager notifications**. Experiments will correlate CPU, memory, restarts, queue lag, throughput, order-completion latency, reserved/available stock and reservation age. Order/job identifiers belong in logs; metric labels remain bounded.
 
 **Helm** will manage infrastructure components. **Kustomize** will define application bases and local/autoscaling overlays. **Argo CD** and digest-based image promotion through **GHCR** enter in the GitOps milestone. Initial HPA scaling uses Metrics Server; Prometheus provides operational visibility.
 
@@ -199,7 +210,10 @@ The local commit hook blocks staged Python and shell failures, including errors 
 - [x] Bounded, reproducible reporting core and unit tests.
 - [x] Local quality tooling and CI definitions.
 - [x] Complete successful foundation PR and `main` CI runs.
-- [ ] Add the API, PostgreSQL, outbox, Kafka and workers.
+- [x] Agree the buyer, finite-inventory and merchant-summary contract.
+- [ ] Implement typed orders and catalog/initial-stock fixtures.
+- [ ] Add API admission, atomic reservations and authorized summaries.
+- [ ] Add outbox, Kafka, workers, finalization and reservation recovery.
 - [ ] Run on local Kubernetes with Helm and Kustomize.
 - [ ] Establish observability and reproduce the duplicate-delivery failure window.
 - [ ] Measure fixed-worker versus CPU-autoscaling behavior.
@@ -217,6 +231,7 @@ Each milestone requires execution evidence and an explanation of observed behavi
   scripts/                     Scanner installers and README asset generation
 docs/
   assets/                      Animated and static flow illustrations
+  application-contract.md      Orders, reservations, states and summary semantics
   development.md               Local setup, checks and contribution workflow
   plan.md                      Architecture, milestones and experiments
   preflight.md                 Environment observations and capacity assumptions
