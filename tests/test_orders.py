@@ -1,13 +1,45 @@
-"""Price snapshots and admission bounds for the pure order calculation."""
+"""Order quotations, input bounds and accepted-order processing lifecycle."""
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
+from datetime import UTC, datetime, timedelta, timezone
+from uuid import UUID
 
 import pytest
 
 from labflow.currency import Currency
-from labflow.orders import OrderItem, OrderQuote, QuotedItem
+from labflow.orders import (
+    InvalidOrderTransitionError,
+    Order,
+    OrderFailureReason,
+    OrderItem,
+    OrderQuote,
+    OrderStatus,
+    QuotedItem,
+)
 from labflow.price_list import PriceList
 from labflow.store import Store
+
+REASONS = {
+    OrderStatus.PENDING: None,
+    OrderStatus.CONFIRMED: None,
+    OrderStatus.REJECTED: OrderFailureReason.BUSINESS_RULE_VIOLATION,
+    OrderStatus.PROCESSING_FAILED: OrderFailureReason.RETRY_EXHAUSTED,
+}
+
+
+@pytest.fixture(name="pending")
+def pending_order_fixture(make_price_list):
+    """Represent an accepted two-shirt order without accepting it in a database."""
+    quote = OrderQuote.from_price_list(
+        items=(OrderItem("sku-shirt", 2),),
+        price_list=make_price_list(prices={"sku-shirt": 1990}),
+    )
+    return Order(
+        order_id=UUID("00000000-0000-4000-8000-000000000001"),
+        buyer_id="buyer-a",
+        quote=quote,
+        accepted_at=datetime(2026, 11, 10, 10, tzinfo=UTC),
+    )
 
 
 def test_quote_known_order(make_price_list):
@@ -256,3 +288,158 @@ def test_product_in_catalog_is_not_necessarily_offered_by_store(
     prices = PriceList(berlin_store, "prices-v1", {"sku-shirt": 1990}, shared_catalog)
     with pytest.raises(ValueError, match="product not offered by store: sku-mug"):
         OrderQuote.from_price_list(items=(OrderItem("sku-mug", 1),), price_list=prices)
+
+
+def test_new_order_is_pending_with_frozen_quote(pending):
+    """Construction represents pending processing, not completed payment."""
+    assert pending.status is OrderStatus.PENDING
+    assert pending.resolved_at is None
+    assert pending.reason is None
+    assert pending.quote.total_cents == 3980
+    assert pending.quote.currency.value == "EUR"
+
+
+@pytest.mark.parametrize("source", list(OrderStatus))
+@pytest.mark.parametrize("target", list(OrderStatus))
+def test_processing_transition_matrix(pending, source, target):
+    """Only pending-to-terminal proposals are permitted, including same-state cases."""
+    current = pending
+    at = pending.accepted_at + timedelta(seconds=1)
+    if source is not OrderStatus.PENDING:
+        current = pending.resolve(source, at=at, reason=REASONS[source])
+    if source is OrderStatus.PENDING and target is not OrderStatus.PENDING:
+        updated = current.resolve(target, at=at, reason=REASONS[target])
+        assert updated.status is target
+        assert updated.resolved_at == at
+        assert updated.reason is REASONS[target]
+        assert updated.order_id == current.order_id
+        assert updated.buyer_id == current.buyer_id
+        assert updated.accepted_at == current.accepted_at
+        assert updated.quote is current.quote
+    else:
+        with pytest.raises(InvalidOrderTransitionError):
+            current.resolve(target, at=at, reason=REASONS[target])
+    assert current.status is source
+    assert pending.status is OrderStatus.PENDING
+
+
+@pytest.mark.parametrize("status", list(OrderStatus))
+@pytest.mark.parametrize("reason", [None, *OrderFailureReason])
+def test_state_and_reason_must_match_when_loading_snapshot(pending, status, reason):
+    """Rehydrated records obey the same business invariants as proposals."""
+    allowed = reason is REASONS[status] or (
+        status is OrderStatus.PROCESSING_FAILED
+        and reason is OrderFailureReason.RESERVATION_EXPIRED
+    )
+    resolved_at = None if status is OrderStatus.PENDING else pending.accepted_at
+    if allowed:
+        loaded = replace(pending, status=status, resolved_at=resolved_at, reason=reason)
+        assert loaded.reason is reason
+    else:
+        with pytest.raises(ValueError, match="reason is incompatible"):
+            replace(pending, status=status, resolved_at=resolved_at, reason=reason)
+
+
+def test_expiry_is_a_technical_failure(pending):
+    """Represent a core-authorized expiration, without performing deadline checks."""
+    expired = pending.resolve(
+        OrderStatus.PROCESSING_FAILED,
+        at=pending.accepted_at + timedelta(minutes=5),
+        reason=OrderFailureReason.RESERVATION_EXPIRED,
+    )
+    assert expired.reason is OrderFailureReason.RESERVATION_EXPIRED
+
+
+def test_offset_aware_timestamps_are_normalized_to_utc(pending):
+    """Store a consistent time representation for future timestamp persistence."""
+    offset = timezone(timedelta(hours=2))
+    accepted_at = datetime(2026, 11, 10, 12, tzinfo=offset)
+    current = replace(pending, accepted_at=accepted_at)
+    resolved = current.resolve(
+        OrderStatus.CONFIRMED, at=accepted_at + timedelta(seconds=2)
+    )
+    assert current.accepted_at == pending.accepted_at
+    assert current.accepted_at.tzinfo is UTC
+    assert resolved.resolved_at.tzinfo is UTC
+    assert resolved.resolved_at == pending.accepted_at + timedelta(seconds=2)
+
+
+@pytest.mark.parametrize("value", [None, "2026-11-10T10:00:00Z", 123])
+def test_acceptance_requires_datetime(pending, value):
+    """External timestamp strings must be parsed at the boundary."""
+    with pytest.raises(TypeError, match="accepted_at must be a datetime"):
+        replace(pending, accepted_at=value)
+
+
+def test_naive_acceptance_is_rejected(pending):
+    """A local wall clock without an offset is ambiguous."""
+    with pytest.raises(ValueError, match="accepted_at must be offset-aware"):
+        replace(pending, accepted_at=datetime(2026, 11, 10, 10))
+
+
+@pytest.mark.parametrize("value", [None, "2026-11-10T10:00:00Z", 123])
+def test_resolution_requires_datetime(pending, value):
+    """Terminal snapshots always have a trusted decision timestamp."""
+    with pytest.raises(TypeError, match="resolved_at must be a datetime"):
+        pending.resolve(OrderStatus.CONFIRMED, at=value)
+
+
+def test_naive_resolution_is_rejected(pending):
+    """Decision timestamps follow the same explicit-offset contract."""
+    with pytest.raises(ValueError, match="resolved_at must be offset-aware"):
+        pending.resolve(OrderStatus.CONFIRMED, at=datetime(2026, 11, 10, 10))
+
+
+def test_resolution_cannot_precede_acceptance(pending):
+    """A decision cannot refer to a time before this order was accepted."""
+    with pytest.raises(ValueError, match="must not precede"):
+        pending.resolve(
+            OrderStatus.CONFIRMED, at=pending.accepted_at - timedelta(seconds=1)
+        )
+    assert pending.resolved_at is None
+
+
+def test_pending_cannot_have_resolution_time(pending):
+    """Reject incoherent records during rehydration as well as construction."""
+    with pytest.raises(ValueError, match="pending orders cannot have resolved_at"):
+        replace(pending, resolved_at=pending.accepted_at)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("order_id", "00000000-0000-4000-8000-000000000001"),
+        ("buyer_id", None),
+        ("quote", None),
+        ("status", "pending"),
+        ("reason", "retry_exhausted"),
+    ],
+)
+def test_order_rejects_invalid_field_types(pending, field, value):
+    """Require explicit domain types rather than silently coercing values."""
+    with pytest.raises(TypeError, match=field):
+        replace(pending, **{field: value})
+
+
+@pytest.mark.parametrize("buyer_id", ["", " buyer-a", "buyer-a "])
+def test_order_rejects_invalid_buyer_identity(pending, buyer_id):
+    """Ownership identifiers must satisfy the existing identifier contract."""
+    with pytest.raises(ValueError, match="buyer_id"):
+        replace(pending, buyer_id=buyer_id)
+
+
+@pytest.mark.parametrize("status", [None, "confirmed", 1])
+def test_resolution_rejects_invalid_target_type(pending, status):
+    """Callers must select an enum state, not pass an unparsed event field."""
+    with pytest.raises(TypeError, match="status"):
+        pending.resolve(status, at=pending.accepted_at)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["order_id", "buyer_id", "quote", "accepted_at", "status", "resolved_at", "reason"],
+)
+def test_order_fields_are_immutable(pending, field):
+    """Prevent direct assignment from bypassing transition validation."""
+    with pytest.raises(FrozenInstanceError):
+        setattr(pending, field, None)
