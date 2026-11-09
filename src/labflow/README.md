@@ -1,16 +1,18 @@
 # LabFlow Application Model
 
-Immutable store configuration, shared product metadata and price quotations are implemented and tested locally. Their remote CI is pending. Inventory, order acceptance, asynchronous processing and persistence remain planned; see the [application contract](../../docs/application-contract.md).
+Immutable store configuration, shared product metadata and price quotations are implemented. Immutable inventory snapshots and availability calculations are now tested locally; their remote CI is pending. Transactional inventory, order acceptance, asynchronous processing and persistence remain planned; see the [application contract](../../docs/application-contract.md).
 
-![Three-step walkthrough of object relationships: solid arrows point from each store price list to the shared catalog; dashed arrows point from quotations to the price lists used at construction. Highlights explain shared metadata, store prices and copied quotation values.](../../docs/assets/labflow-domain.gif)
+![Four-step illustration of shared catalog references, store prices, copied quotations and independent inventory read snapshots.](../../docs/assets/labflow-domain.gif)
 
-*Three-step walkthrough of object relationships. Highlights select the relationship being explained; they do not represent execution, messages or traffic. Solid arrows point to retained references. Dashed arrows point to constructor inputs whose values are copied. [Static alternative](../../docs/assets/labflow-domain.png).*
+*Four-step walkthrough of object relationships. Inventory boxes show illustrative observed counts, not stock updates. Highlights select the relationship being explained; they do not represent execution, messages or traffic. Solid arrows point to retained references. Dashed arrows point to constructor inputs whose values are copied. [Static alternative](../../docs/assets/labflow-domain.png).*
 
 ## Reading the Animation
 
 1. Both `PriceList` objects point to the same `Catalog`: each stores that reference.
 2. Each list references its own `Store` (shown as a label), derives its currency and stores its own SKU prices. Catalog metadata is shared; store prices are independent.
 3. `OrderQuote.from_price_list` reads a list and requested `OrderItem` values, then creates `QuotedItem` snapshots. A quote keeps the copied values, not a reference to the price list. The dashed arrow shows this construction dependency.
+
+4. Each `InventorySnapshot` identifies a store and SKU and displays independent observed counts. Highlighting the boxes does not reserve or consume units; `available` is derived from `on_hand - reserved`.
 
 An arrow means **the object at its tail uses the object at its tip**. It is not a network connection or a message route. The values shown are the same in every frame; animation only changes the explanatory highlight. The footer describes the current step. Row colors identify the two stores, not processing states.
 
@@ -22,6 +24,8 @@ classDiagram
     Store --> Currency : currency
     PriceList --> Catalog : catalog
     Catalog --> Product : products
+    InventorySnapshot --> Store : store
+    InventorySnapshot --> Product : product
     OrderQuote --> QuotedItem : items
     OrderQuote --> Currency : currency
     OrderQuote ..> PriceList : from_price_list()
@@ -36,6 +40,7 @@ Solid arrows represent retained object references. Dashed arrows represent const
 | [Catalog](catalog.py) | Versioned product metadata shared across stores; no prices or stock |
 | [Store](store.py) | Store identity and its fixed [Currency](currency.py), EUR or BRL |
 | [PriceList](price_list.py) | One store's versioned prices for a subset of products in a shared catalog |
+| [InventorySnapshot](inventory.py) | Immutable on-hand and reserved counts for one store/SKU; derives available stock |
 | [OrderItem](orders.py) | Requested SKU and quantity |
 | [QuotedItem](orders.py) | Requested quantity with a copied unit price |
 | [OrderQuote](orders.py) | Store, currency, both snapshot versions and immutable quoted items |
@@ -71,6 +76,25 @@ store-saopaulo BRL 11980
 ```
 
 Prices are independently configured; no exchange rate or currency conversion is involved. Catalog and price-list versions are descriptive identifiers; persistence must enforce their uniqueness and official ownership. These objects do not perform authorization or reserve inventory.
+
+## Inventory Read Snapshots
+
+Using `berlin` and `catalog` from the example above:
+
+```python
+from labflow.inventory import InventorySnapshot
+
+snapshot = InventorySnapshot(
+    berlin, catalog.products["sku-shirt"], on_hand=10, reserved=6
+)
+print(snapshot.on_hand, snapshot.reserved, snapshot.available)
+```
+
+Expected output: `10 6 4`. The supplied counts represent an observed balance; constructing the object does not reserve stock. `available = on_hand - reserved` is derived and the object rejects counts outside `0 <= reserved <= on_hand`.
+
+Each snapshot identifies one store/SKU. Shared product metadata does not combine stock across stores. The animation highlights inventory read snapshots in step four; the class diagram shows their retained Store and Product references.
+
+**Persistence decision:** stock changes will use conditional PostgreSQL updates inside transactions. The persistence layer will construct snapshots from returned rows. A snapshot may become stale and must not authorize a reservation or overwrite current database counts. There are no `reserve`, `release` or `consume` methods on this read model. Database constraints, order-linked reservations, idempotency and concurrent integration tests belong to the persistence milestone; no database is implemented in this slice.
 
 ## Commerce Concepts, Not a Shopify Replica
 

@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from random import Random
 
+from labflow.validation import validate_integer_range
+
 GENERATOR_VERSION = "sales-v1"
 MAX_ROWS = 10_000
 MAX_SEED = 2**32 - 1
@@ -30,14 +32,8 @@ def generate_sales(*, seed: int, rows: int) -> tuple[Sale, ...]:
     Callers must retain the seed, row count, generator version, and runtime
     version when recording an experiment.
     """
-    if isinstance(seed, bool) or not isinstance(seed, int):
-        raise TypeError("seed must be an integer")
-    if not 0 <= seed <= MAX_SEED:
-        raise ValueError(f"seed must be between 0 and {MAX_SEED}")
-    if isinstance(rows, bool) or not isinstance(rows, int):
-        raise TypeError("rows must be an integer")
-    if not 1 <= rows <= MAX_ROWS:
-        raise ValueError(f"rows must be between 1 and {MAX_ROWS}")
+    validate_integer_range(seed, "seed", minimum=0, maximum=MAX_SEED)
+    validate_integer_range(rows, "rows", minimum=1, maximum=MAX_ROWS)
 
     random = Random(seed)
     return tuple(
