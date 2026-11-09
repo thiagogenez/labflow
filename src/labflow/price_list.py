@@ -7,6 +7,7 @@ from types import MappingProxyType
 from labflow.catalog import Catalog, validate_identifier
 from labflow.currency import MAX_AMOUNT_CENTS, Currency
 from labflow.store import Store
+from labflow.validation import validate_integer_range
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,12 +60,13 @@ class PriceList:
             validate_identifier(product_id, "product_id")
             if product_id not in self.catalog.products:
                 raise ValueError(f"product is absent from catalog: {product_id}")
-            if isinstance(price, bool) or not isinstance(price, int):
-                raise TypeError("unit_price_cents must be an integer")
-            if not 0 <= price <= MAX_AMOUNT_CENTS:
-                raise ValueError(
-                    "unit_price_cents is outside the supported amount range"
-                )
+            validate_integer_range(
+                price,
+                "unit_price_cents",
+                minimum=0,
+                maximum=MAX_AMOUNT_CENTS,
+                range_message="unit_price_cents is outside the supported amount range",
+            )
         object.__setattr__(self, "prices", MappingProxyType(prices))
 
     @property

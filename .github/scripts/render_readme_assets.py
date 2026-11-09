@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / "docs" / "assets"
 SIZE = (840, 320)
-DOMAIN_SIZE = (840, 360)
+DOMAIN_SIZE = (840, 460)
 BACKGROUND = "#0b1821"
 SURFACE = "#132631"
 TEXT = "#eef5f5"
@@ -248,7 +248,7 @@ def domain_reference(
 
 def pricing_lane(draw: ImageDraw.ImageDraw, lane: PricingLane, progress: float) -> None:
     """Highlight dependencies in place without implying network messages or traffic."""
-    stage = min(int(progress * 3), 2)
+    stage = min(int(progress * 4), 3)
     domain_reference(
         draw,
         ((304, lane.top + 50), (232, lane.top + 50)),
@@ -301,12 +301,39 @@ def pricing_lane(draw: ImageDraw.ImageDraw, lane: PricingLane, progress: float) 
     )
 
 
+def inventory_snapshots(draw: ImageDraw.ImageDraw, *, active: bool) -> None:
+    """Show independent observed balances, without suggesting stock mutations."""
+    for left, lane, counts in zip((24, 430), PRICING_LANES, ((10, 6), (20, 3))):
+        on_hand, reserved = counts
+        draw.rounded_rectangle(
+            (left, 325, left + 386, 411),
+            radius=8,
+            fill="#203c45" if active else SURFACE,
+            outline=lane.color if active else LINE,
+        )
+        text(draw, (left + 16, 336), "InventorySnapshot", TextStyle(20, TEXT, 354))
+        text(
+            draw,
+            (left + 16, 363),
+            f"{lane.store} / sku-shirt / observed counts",
+            TextStyle(15, MUTED, 354),
+        )
+        text(
+            draw,
+            (left + 16, 388),
+            f"on_hand {on_hand} / reserved {reserved} / available {on_hand - reserved}",
+            TextStyle(15, lane.color, 354),
+        )
+
+
 def domain_frame(progress: float) -> Image.Image:
-    """Illustrate shared products and independent pricing without runtime claims."""
+    """Illustrate pricing dependencies and inventory read snapshots, not execution."""
     image = Image.new("RGB", DOMAIN_SIZE, BACKGROUND)
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((0, 0, 839, 359), radius=12, outline=LINE)
-    text(draw, (24, 18), "Object relationships / one shared catalog", TextStyle(26))
+    draw.rounded_rectangle(
+        (0, 0, DOMAIN_SIZE[0] - 1, DOMAIN_SIZE[1] - 1), radius=12, outline=LINE
+    )
+    text(draw, (24, 18), "Application model / pricing + inventory", TextStyle(26))
     text(
         draw,
         (24, 54),
@@ -316,7 +343,7 @@ def domain_frame(progress: float) -> Image.Image:
     draw.rounded_rectangle(
         (24, 98, 232, 307),
         radius=8,
-        fill="#203c45" if progress < 1 / 3 else SURFACE,
+        fill="#203c45" if progress < 1 / 4 else SURFACE,
         outline=MUTED,
     )
     text(draw, (40, 113), "Catalog", TextStyle(24, TEXT, 176))
@@ -327,14 +354,16 @@ def domain_frame(progress: float) -> Image.Image:
     text(draw, (40, 281), "Metadata only", TextStyle(16, MUTED, 176))
     for lane in PRICING_LANES:
         pricing_lane(draw, lane, progress)
+    inventory_snapshots(draw, active=progress >= 3 / 4)
     text(
         draw,
-        (24, 334),
+        (24, 434),
         (
             "1. Both price lists retain a reference to the same product catalog.",
             "2. Each price list uses its store currency and independent prices.",
             "3. A quote copies values; it does not retain a PriceList reference.",
-        )[min(int(progress * 3), 2)],
+            "4. Inventory reads: available = on_hand - reserved; no stock writes.",
+        )[min(int(progress * 4), 3)],
         TextStyle(17, MUTED),
     )
     return image
@@ -367,7 +396,7 @@ def main() -> None:
         optimize=True,
         disposal=1,
         comment=(
-            b"Illustrative pricing snapshots; not a runtime trace."
+            b"Illustrative pricing and inventory snapshots; not a runtime trace."
             if args.diagram == "domain"
             else b"Illustrative accepted orders; not a runtime trace."
         ),

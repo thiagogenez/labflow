@@ -7,6 +7,7 @@ from labflow.catalog import validate_identifier
 from labflow.currency import MAX_AMOUNT_CENTS, Currency
 from labflow.price_list import PriceList
 from labflow.store import validate_store_configuration
+from labflow.validation import validate_integer_range
 
 MAX_ORDER_LINES = 20
 MAX_QUANTITY = 100
@@ -24,14 +25,8 @@ def _validate_item(product_id: str, quantity: int) -> None:
         TypeError: An argument has an unsupported type.
         ValueError: An identifier is invalid or quantity is outside its bounds.
     """
-    if not isinstance(product_id, str):
-        raise TypeError("product_id must be a string")
-    if not product_id or product_id != product_id.strip():
-        raise ValueError("product_id must be nonempty without surrounding whitespace")
-    if isinstance(quantity, bool) or not isinstance(quantity, int):
-        raise TypeError("quantity must be an integer")
-    if not 1 <= quantity <= MAX_QUANTITY:
-        raise ValueError(f"quantity must be between 1 and {MAX_QUANTITY}")
+    validate_identifier(product_id, "product_id")
+    validate_integer_range(quantity, "quantity", minimum=1, maximum=MAX_QUANTITY)
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,11 +76,13 @@ class QuotedItem:
     def __post_init__(self) -> None:
         """Validate item fields and the copied catalog price."""
         _validate_item(self.product_id, self.quantity)
-        price = self.unit_price_cents
-        if isinstance(price, bool) or not isinstance(price, int):
-            raise TypeError("unit_price_cents must be an integer")
-        if not 0 <= price <= MAX_AMOUNT_CENTS:
-            raise ValueError("unit_price_cents is outside the supported amount range")
+        validate_integer_range(
+            self.unit_price_cents,
+            "unit_price_cents",
+            minimum=0,
+            maximum=MAX_AMOUNT_CENTS,
+            range_message="unit_price_cents is outside the supported amount range",
+        )
 
     @property
     def total_cents(self) -> int:

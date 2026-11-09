@@ -13,7 +13,7 @@
 
 LabFlow is a public Platform Engineering and SRE lab building an observable order-processing system: buyers place orders against finite inventory, and merchants query confirmed and pending order values. Reproducible API traffic and controlled failures will support operational experiments.
 
-**Running today:** a bounded Python generator, report aggregator, shared product catalogs and store-specific EUR/BRL price lists and quotations. The catalog/quotation slice is verified locally; its remote CI is pending. **Next:** atomic stock reservations, asynchronous order processing and merchant summaries. The [agreed application contract](docs/application-contract.md) defines this target; the order flow is not implemented yet.
+**Running today:** a bounded Python generator, report aggregator, shared product catalogs, store-specific EUR/BRL price lists and quotations, and immutable inventory snapshots. Inventory snapshot validation and availability calculations are verified locally; their remote CI is pending. **Next:** order-linked reservations, atomic persistence, asynchronous order processing and merchant summaries. The [agreed application contract](docs/application-contract.md) defines this target; the order flow is not implemented yet.
 
 <img src="docs/assets/labflow-flow.gif" width="720" alt="Planned order processing after stock reservation: three accepted orders move from a Kafka requests topic to separate worker pods. Compact outcomes return through the results topic in the same Kafka cluster, then a result consumer atomically finalizes orders and inventory in PostgreSQL.">
 
@@ -25,10 +25,11 @@ LabFlow is a public Platform Engineering and SRE lab building an observable orde
 | --- | --- | --- |
 | Deterministic sales generation | Implemented | Seeded generation, bounded inputs and isolated random state |
 | Report aggregation | Implemented | Counts, units and revenue in integer cents; empty-input behavior |
-| Unit tests | 130 cases passed locally; foundation verified in ARM64 CI | The 26-case foundation has remote evidence; catalog/quotation additions await their own PR CI |
+| Unit tests | 160 cases passed locally | Includes 30 inventory snapshot cases; this inventory slice awaits its own PR CI |
 | Python quality checks | Passed locally and in ARM64 CI | Ruff, Black and Pylint |
 | CI and security jobs | Shared gate verified on ARM64 | Python/ShellCheck checks, Gitleaks and OSV-Scanner passed on PR #2 and `main` |
-| Catalogs and quotations | Implemented and verified locally; remote CI pending | Shared product metadata, independent store price lists and versioned EUR/BRL quotations |
+| Catalogs and quotations | Implemented | Shared product metadata, independent store price lists and versioned EUR/BRL quotations |
+| Inventory read snapshots | Verified locally; remote CI pending | Validated immutable counts and derived availability per store/SKU; no persistence or concurrency control |
 | Order admission, inventory and merchant summaries | Contract agreed; implementation pending | Atomic reservations, asynchronous processing, expiry and idempotent finalization |
 | API, Kafka and PostgreSQL | Planned | Order admission, transactional outbox, event processing and authorized reads |
 | Kubernetes and observability | Planned | Helm, Kustomize, Traefik, Prometheus, Grafana and Alertmanager |
@@ -246,6 +247,7 @@ src/labflow/
   catalog.py                   Shared product metadata snapshots
   price_list.py                Store-specific prices and offered SKUs
   orders.py                    Validated order items and quotations
+  inventory.py                 Immutable inventory read snapshots and derived availability
   synthetic.py                 Deterministic sale records
   reporting.py                 Compact report aggregation
 tests/                         Unit and parametrized input tests
