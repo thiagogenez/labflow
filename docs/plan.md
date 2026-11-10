@@ -1,6 +1,6 @@
 # LabFlow Implementation Plan
 
-Status: M0 and the M1 calculation foundation are complete, including successful PR and main CI runs for the shared quality gate. M2 pricing and inventory read models are implemented. Processing lifecycle rules are locally tested with remote CI pending; the remaining M2 services and M3-M5 are pending. Updated 2026-11-10: confirmed scope includes finite-stock reservation at buyer admission, asynchronous orders through the API/events and merchant summaries by period, showing confirmed and pending amounts separately plus their combined total; payments are deferred. The [agreed application contract](application-contract.md) replaces the seed-driven report-request model.
+Status: M0 and the M1 calculation foundation are complete, including successful PR and main CI runs for the shared quality gate. M2 pricing and inventory read models are implemented. Processing lifecycle rules are implemented; reservation lifecycle proposals are locally tested with remote CI pending; the remaining M2 services and M3-M5 are pending. Updated 2026-11-10: confirmed scope includes finite-stock reservation at buyer admission, asynchronous orders through the API/events and merchant summaries by period, showing confirmed and pending amounts separately plus their combined total; payments are deferred. The [agreed application contract](application-contract.md) replaces the seed-driven report-request model.
 
 ## Purpose and Working Agreement
 
@@ -180,3 +180,7 @@ All later milestones retain their own preflight, resource budget, evidence, and 
 ## Current Domain Slice: Processing Lifecycle (2026-11-10)
 
 Add an immutable accepted Order with UUID identity, buyer, frozen quote and UTC lifecycle timestamps. Permit pending-to-confirmed/rejected/processing_failed proposals only, with safe reasons and terminal-state guards. Verify the full transition matrix, invalid metadata and snapshot preservation. Correct the contract so confirmation retains committed stock until later fulfillment; pending expiry cannot release a confirmed commitment. Keep database writes, reservation records, authorization, HTTP idempotency, Kafka and fulfillment implementation outside this slice. Conditional PostgreSQL updates and transactional integration tests remain required before claiming durable or concurrent correctness.
+
+## Current Domain Slice: Reservation Lifecycle (2026-11-10)
+
+Implement a Reservation linked to the frozen accepted Order, with an independent UUID, deadline and held/committed/released states. Permit held-to-terminal proposals only; terminal outcomes cannot reopen, repeat or switch. Test commitment before expiry, release on rejection/failure, expiry at/after the deadline, UTC normalization and immutable order/items. Update the application README, class/state diagrams and generated animated/static reservation illustration. The completion gate is local executable evidence and shared quality checks; remote CI remains pending until publication. Database transactions, unique order/reservation ownership, stock changes, idempotency, fulfillment and package reorganization are outside this slice.

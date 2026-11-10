@@ -1,6 +1,6 @@
 # Orders, Inventory and Merchant Summary Contract
 
-Status: agreed business contract, updated 2026-11-10. Pricing and inventory read models are implemented; processing lifecycle rules are tested locally, with remote CI pending. API and persistence are not implemented. Buyers place orders with finite-stock reservations at admission and asynchronous processing. Merchants query confirmed and pending order values by acceptance period. Payments and inventory-replenishment endpoints are deferred. Endpoint shapes and numerical bounds below remain implementation proposals.
+Status: agreed business contract, updated 2026-11-10. Pricing and inventory read models are implemented; processing lifecycle rules are implemented. Order-linked reservation proposals are locally tested with remote CI pending. API and persistence are not implemented. Buyers place orders with finite-stock reservations at admission and asynchronous processing. Merchants query confirmed and pending order values by acceptance period. Payments and inventory-replenishment endpoints are deferred. Endpoint shapes and numerical bounds below remain implementation proposals.
 
 ## Actors and Scope
 
@@ -50,6 +50,16 @@ Order state is `pending -> confirmed | rejected | processing_failed`. Pending or
 The planned database stores order identity/state/timestamps and accepted line prices, with foreign keys to buyer/store and order-linked reservation records. Accepted snapshots must remain available even after catalog or price changes. Constraints must enforce state/reason/time coherence and valid inventory counts. Scoped HTTP idempotency keys and event/attempt deduplication are persisted separately with unique constraints.
 
 The core transaction must conditionally resolve the current pending order and its reservation, validate the applicable attempt and deadline using database time, and commit stock effects and deduplication together. A proposal built from stale data cannot authorize a write. Duplicate compatible results return the stored outcome; conflicting or late outcomes cannot replace it. No database schema or transaction is implemented by this domain slice.
+
+### Reservation Lifecycle
+
+`Reservation` references the accepted immutable `Order` and has its own server-assigned UUID, UTC deadline, `ReservationStatus` and optional UTC resolution time. Store identity and the complete SKU/quantity tuple derive from the frozen accepted order. The in-memory reference is not the current persisted order state; future reservation rows link to orders through foreign keys.
+
+The only transitions are `held -> committed | released`. Both outcomes are terminal. Repeated resolution, reopening and switching outcomes are invalid local transitions. Expiry is a release cause, not a state. Commitment requires an unexpired hold; at the exact deadline commitment is refused and expiry is allowed. Release for rejection or definitive failure can occur before expiry. All resolution times must be at or after order acceptance, and the deadline must be strictly after acceptance.
+
+A new commercial hold requires a new reservation identity and explicit admission policy, without rewriting a terminal record. It is not a transport retry. In the initial all-items-per-order flow, an accepted HTTP replay must retain the existing order and reservation. Persistence must enforce the intended order/reservation uniqueness and deduplication; changing a UUID alone never grants stock. No read model or local proposal enforces these cross-record constraints.
+
+Future core transactions must atomically confirm the pending order and commit its held reservation, or fail/reject the pending order, release its hold and adjust stock. Database time, current state, attempt and deadline checks govern the write, even if a local proposal was computed earlier. Committed reservations cannot be released or expired by this processing lifecycle. Later fulfillment/cancellation will record separate operations rather than reopening the reservation. The five-minute example deadline in documentation is illustrative, not an operational default.
 
 ## Finite Inventory and Reservations
 
@@ -149,4 +159,4 @@ The duplicate-delivery experiment must prove unchanged order counts, merchant or
 
 M2 acceptance requires concurrent tests for ten pieces/three five-piece submissions, multi-item reservation rollback, duplicate admission and completion, stock invariants, reservation release, restart-safe initial stock, expiry versus completion races, late-result suppression, core-outage recovery, and tests for price snapshots, mismatched final totals, HTTP idempotency (including price changes), duplicate results, stale attempts, retry exhaustion, period boundaries, status-bucket calculations and transitions, rejected/failed-amount exclusion, empty periods and cross-store access. Test outbox/offset crash windows against real PostgreSQL and Kafka.
 
-Implemented models include typed order items, shared product fixtures, versioned store price lists, integer-cent quotations and inventory read snapshots. The new processing lifecycle is locally tested; its remote CI is pending. Initial-stock fixtures and transactional inventory remain to implement. It adds no HTTP server or infrastructure. Follow with transactional API/database reservation and summary reads, then the event pipeline and its failure tests, one reviewed step at a time.
+Implemented models include typed order items, shared product fixtures, versioned store price lists, integer-cent quotations and inventory read snapshots. The processing lifecycle is implemented. Order-linked reservation proposals are locally tested; their remote CI is pending. Initial-stock fixtures and transactional inventory remain to implement. It adds no HTTP server or infrastructure. Follow with transactional API/database reservation and summary reads, then the event pipeline and its failure tests, one reviewed step at a time.

@@ -1,4 +1,4 @@
-"""Render worker-flow and application-model README illustrations."""
+"""Render worker-flow, application-model and reservation README illustrations."""
 
 from argparse import ArgumentParser
 from dataclasses import dataclass
@@ -369,13 +369,87 @@ def domain_frame(progress: float) -> Image.Image:
     return image
 
 
+def reservation_frame(progress: float) -> Image.Image:
+    """Highlight alternative terminal outcomes, without implying a runtime trace."""
+    stage = min(int(progress * 4), 3)
+    image = Image.new("RGB", (840, 400), BACKGROUND)
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((0, 0, 839, 399), radius=12, outline=LINE)
+    text(draw, (24, 18), "Reservation lifecycle", TextStyle(27))
+    text(
+        draw,
+        (24, 57),
+        "Two alternatives from held / arrows mean allowed transitions",
+        TextStyle(17, MUTED),
+    )
+    connection(draw, ((240, 195), (316, 195), (316, 132), (530, 132)))
+    connection(draw, ((240, 195), (316, 195), (316, 272), (530, 272)))
+    text(draw, (332, 101), "commit / before deadline", TextStyle(15, ACCENT, 192))
+    text(draw, (332, 286), "reject / fail / expire", TextStyle(16, "#f0c477", 192))
+    draw.rounded_rectangle(
+        (24, 158, 240, 231),
+        radius=8,
+        fill="#203c45" if stage == 0 else SURFACE,
+        outline=ACCENT,
+    )
+    text(draw, (40, 171), "held", TextStyle(25, TEXT, 184))
+    text(draw, (40, 205), "sku-shirt / 2 units", TextStyle(16, MUTED, 184))
+    for top, label, color, active in (
+        (94, "committed", ACCENT, stage in (1, 3)),
+        (234, "released", "#f0c477", stage in (2, 3)),
+    ):
+        draw.rounded_rectangle(
+            (530, top, 816, top + 78),
+            radius=8,
+            fill="#203c45" if active else SURFACE,
+            outline=color,
+        )
+        text(draw, (546, top + 10), label, TextStyle(25, TEXT, 254))
+        text(draw, (546, top + 48), "FINAL / no return", TextStyle(16, color, 254))
+    text(
+        draw,
+        (24, 335),
+        (
+            "1. A held reservation separates units while processing is pending.",
+            "2. Confirmed: keep units committed; shipment is a later operation.",
+            "3. Alternative: rejection, failure or expiry releases the hold.",
+            "4. Terminal outcomes never change; a new hold needs a new identity.",
+        )[stage],
+        TextStyle(17, MUTED),
+    )
+    text(
+        draw,
+        (24, 370),
+        "Illustration / no stock writes / message retries reuse the same reservation",
+        TextStyle(16, MUTED),
+    )
+    return image
+
+
 def main() -> None:
     """Write the animated and static assets with the same labels and layout."""
     parser = ArgumentParser(description=__doc__)
-    parser.add_argument("--diagram", choices=("workers", "domain"), default="workers")
+    parser.add_argument(
+        "--diagram", choices=("workers", "domain", "reservations"), default="workers"
+    )
     args = parser.parse_args()
-    render = domain_frame if args.diagram == "domain" else frame
-    stem = "labflow-domain" if args.diagram == "domain" else "labflow-flow"
+    render, stem, comment = {
+        "workers": (
+            frame,
+            "labflow-flow",
+            b"Illustrative accepted orders; not a runtime trace.",
+        ),
+        "domain": (
+            domain_frame,
+            "labflow-domain",
+            b"Illustrative pricing and inventory snapshots; not a runtime trace.",
+        ),
+        "reservations": (
+            reservation_frame,
+            "labflow-reservations",
+            b"Illustrative alternative reservation outcomes; not a runtime trace.",
+        ),
+    }[args.diagram]
     ASSETS.mkdir(parents=True, exist_ok=True)
     frames = [render(index / 71) for index in range(72)]
     frames[-1].save(ASSETS / f"{stem}.png", optimize=True)
@@ -395,11 +469,7 @@ def main() -> None:
         loop=0,
         optimize=True,
         disposal=1,
-        comment=(
-            b"Illustrative pricing and inventory snapshots; not a runtime trace."
-            if args.diagram == "domain"
-            else b"Illustrative accepted orders; not a runtime trace."
-        ),
+        comment=comment,
     )
     print(f"Rendered docs/assets/{stem}.gif and {stem}.png")
 

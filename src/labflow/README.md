@@ -1,6 +1,6 @@
 # LabFlow Application Model
 
-Immutable store configuration, shared product metadata and price quotations are implemented. Immutable inventory snapshots and availability calculations are implemented. Accepted-order lifecycle rules are also tested locally with remote CI pending. Transactional inventory, durable order acceptance, asynchronous processing and persistence remain planned; see the [application contract](../../docs/application-contract.md).
+Immutable store configuration, shared product metadata and price quotations are implemented. Immutable inventory snapshots and availability calculations are implemented. Accepted-order lifecycle rules are implemented. Order-linked reservation proposals are tested locally with remote CI pending. Transactional inventory, durable order acceptance, asynchronous processing and persistence remain planned; see the [application contract](../../docs/application-contract.md).
 
 ![Four-step illustration of shared catalog references, store prices, copied quotations and independent inventory read snapshots.](../../docs/assets/labflow-domain.gif)
 
@@ -25,6 +25,8 @@ classDiagram
     Catalog --> Product : products
     InventorySnapshot --> Store : store
     InventorySnapshot --> Product : product
+    Reservation --> Order : accepted snapshot
+    Reservation --> ReservationStatus : status
     Order --> OrderQuote : quote
     Order --> OrderStatus : status
     Order --> OrderFailureReason : reason when rejected or failed
@@ -43,6 +45,8 @@ Solid arrows represent retained object references. Dashed arrows represent const
 | [Store](store.py) | Store identity and its fixed [Currency](currency.py), EUR or BRL |
 | [PriceList](price_list.py) | One store's versioned prices for a subset of products in a shared catalog |
 | [InventorySnapshot](inventory.py) | Immutable on-hand and reserved counts for one store/SKU; derives available stock |
+| [Reservation](reservations.py) | Identity, accepted-order link, deadline and terminal commitment/release proposals |
+| [ReservationStatus](reservations.py) | held, committed or released; terminal outcomes never reopen |
 | [Order](orders.py) | Immutable accepted quote, identity, UTC timestamps and guarded processing decisions |
 | [OrderStatus / OrderFailureReason](orders.py) | Processing states and safe business/technical reason codes |
 | [OrderItem](orders.py) | Requested SKU and quantity |
@@ -136,6 +140,52 @@ print(pending.status.value, confirmed.status.value, confirmed.quote.total_cents)
 Expected output: `pending confirmed 3980`. The amount is EUR cents, not a payment receipt. The original pending object and accepted quote remain unchanged. For a different example outcome, resolve the pending object to `REJECTED` with `BUSINESS_RULE_VIOLATION`, or `PROCESSING_FAILED` with `RETRY_EXHAUSTED`. Reasons are safe codes; no new commercial rejection rule is implemented here.
 
 `resolve` proposes a decision; it does not modify inventory, persist an order or deduplicate a message. Resolving a terminal snapshot again raises `InvalidOrderTransitionError`. A future core transaction must check current state, attempt and reservation deadline with database time and commit the decision and inventory effects atomically. The UUID maps naturally to an order key; buyer/store relationships, frozen line values, state/time constraints and unique idempotency/deduplication records belong to the persistence milestone. See the [full contract](../../docs/application-contract.md).
+
+## Order-Linked Reservation Lifecycle
+
+![Illustration of two alternative transitions from held: commit before the deadline, or release after rejection, failure or expiry. Committed and released are terminal and have no return arrows.](../../docs/assets/labflow-reservations.gif)
+
+*Illustration, not a runtime trace. Highlights explain alternatives from the same initial hold, not a sequence from committed to released. Arrows mean allowed transitions; there are no messages or stock writes. Colors identify the two outcomes. [Static alternative](../../docs/assets/labflow-reservations.png).*
+
+```mermaid
+stateDiagram-v2
+    [*] --> held
+    held --> committed: confirm before deadline
+    held --> released: reject / fail / expire
+```
+
+`Reservation` retains the accepted immutable `Order` snapshot. `order_id`, `store_id` and `items` derive from that reference, preserving every accepted SKU/quantity without duplicating editable purchase data. The retained order is not refreshed or resolved by a reservation operation. In the future database, this relationship is an order foreign key, not a nested copy of the entire order.
+
+Using the `pending` order from the previous example:
+
+```python
+from datetime import timedelta
+from labflow.reservations import Reservation
+
+held = Reservation(
+    reservation_id=UUID("00000000-0000-4000-8000-000000000002"),
+    order=pending,
+    expires_at=pending.accepted_at + timedelta(minutes=5),
+)
+committed = held.commit(at=pending.accepted_at + timedelta(seconds=2))
+released = held.release(at=pending.accepted_at + timedelta(seconds=2))
+expired = held.expire(at=held.expires_at)
+print(held.status.value, committed.status.value, released.status.value, expired.status.value)
+print(held.store_id, held.items)
+```
+
+Expected state output: `held committed released released`. These are three independent outcome examples from the same held snapshot, not three operations against one durable reservation. The deadline of five minutes is an illustrative input, not an adopted operational timeout.
+
+- `commit(at=...)` requires acceptance time <= decision time < deadline and keeps units committed for later fulfillment. It does not remove physical stock.
+- `release(at=...)` allows rejection or definitive failure to release a hold at or after acceptance, including before its deadline.
+- `expire(at=...)` requires decision time >= deadline and produces RELEASED; expiration is a cause, not a fourth state.
+- COMMITTED and RELEASED are final. Any subsequent commit/release/expiry call raises `InvalidReservationTransitionError`, including the same operation repeated. New holds require distinct reservation identities and explicit admission; changing the ID does not authorize another stock reservation. Message retries refer to the existing identity.
+
+UTC tests cover repeated hours, skipped hours, explicit `fold`, equivalent offsets and rejection of naive timestamps. Reservation tests also verify a five-minute deadline across both clock transitions. IANA-zone tests use historical Europe/Berlin rules through the standard-library `zoneinfo` module and require the system IANA timezone database; a missing database fails rather than silently skipping the tests. Local ambiguous or nonexistent wall times must be resolved at the input boundary; UTC normalization does not infer user intent.
+
+These are local proposals and validated read/decision objects. The future transaction must verify the current pending order, held reservation, attempt, deadline and stock, then commit order/reservation changes and stock effects together. Duplicate delivery must return or suppress the persisted result without repeating effects. A stale accepted-order reference cannot authorize those writes. Neither constructing a Reservation nor resolving it checks stock, changes inventory, persists data or runs recovery automatically. Shipment, payments and post-confirmation cancellation remain outside this scope.
+
+Generate both reservation assets with `.venv/bin/python .github/scripts/render_readme_assets.py --diagram reservations`. The source generator uses the pinned development environment. All four frames were inspected locally; GitHub rendering remains pending publication.
 
 ## Commerce Concepts, Not a Shopify Replica
 
