@@ -13,7 +13,7 @@
 
 LabFlow is a public Platform Engineering and SRE lab building an observable order-processing system: buyers place orders against finite inventory, and merchants query confirmed and pending order values. Reproducible API traffic and controlled failures will support operational experiments.
 
-**Running today:** a bounded Python generator, report aggregator, shared product catalogs, store-specific EUR/BRL price lists and quotations, immutable inventory snapshots and accepted-order processing lifecycle rules. Lifecycle rules are verified locally; their remote CI is pending. **Next:** order-linked reservations, atomic persistence, asynchronous order processing and merchant summaries. The [agreed application contract](docs/application-contract.md) defines this target; the order flow is not implemented yet.
+**Running today:** a bounded Python generator, report aggregator, shared product catalogs, store-specific EUR/BRL price lists and quotations, immutable inventory snapshots, accepted-order processing lifecycle rules and order-linked reservation proposals. Reservation rules are verified locally; their remote CI is pending. **Next:** durable stock reservations, atomic persistence, asynchronous order processing and merchant summaries. The [agreed application contract](docs/application-contract.md) defines this target; the order flow is not implemented yet.
 
 <img src="docs/assets/labflow-flow.gif" width="720" alt="Planned order processing after stock reservation: three accepted orders move from a Kafka requests topic to separate worker pods. Compact outcomes return through the results topic in the same Kafka cluster, then a result consumer atomically finalizes orders and inventory in PostgreSQL.">
 
@@ -25,12 +25,13 @@ LabFlow is a public Platform Engineering and SRE lab building an observable orde
 | --- | --- | --- |
 | Deterministic sales generation | Implemented | Seeded generation, bounded inputs and isolated random state |
 | Report aggregation | Implemented | Counts, units and revenue in integer cents; empty-input behavior |
-| Unit tests | 223 cases passed locally | Includes 30 inventory snapshot and 63 lifecycle cases; the lifecycle slice awaits its own PR CI |
+| Unit tests | 294 cases passed locally | Includes 60 reservation and 11 UTC-normalization cases; this slice awaits its own PR CI |
 | Python quality checks | Passed locally and in ARM64 CI | Ruff, Black and Pylint |
 | CI and security jobs | Shared gate verified on ARM64 | Python/ShellCheck checks, Gitleaks and OSV-Scanner passed on PR #2 and `main` |
 | Catalogs and quotations | Implemented | Shared product metadata, independent store price lists and versioned EUR/BRL quotations |
 | Inventory read snapshots | Implemented | Validated immutable counts and derived availability per store/SKU; no persistence or concurrency control |
-| Order processing lifecycle | Verified locally; remote CI pending | Frozen accepted quote, UTC timestamps, safe reasons and guarded terminal proposals; no persistence |
+| Order processing lifecycle | Implemented | Frozen accepted quote, UTC timestamps, safe reasons and guarded terminal proposals; no persistence |
+| Reservation lifecycle | Verified locally; remote CI pending | Order-linked held → committed/released proposals, deadline checks and immutable terminal states; no stock writes |
 | Order admission, inventory and merchant summaries | Contract agreed; implementation pending | Atomic reservations, asynchronous processing, expiry and idempotent finalization |
 | API, Kafka and PostgreSQL | Planned | Order admission, transactional outbox, event processing and authorized reads |
 | Kubernetes and observability | Planned | Helm, Kustomize, Traefik, Prometheus, Grafana and Alertmanager |
@@ -91,6 +92,8 @@ Run the test suite from the repository root:
 3. **Return:** the caller receives a dictionary containing three integers. There is no API, queue or database in this execution path yet.
 
 The quick start exercises the existing calculation foundation directly. Sale rows are not order entities. The new order path will use catalog prices and accepted order snapshots; workers will not generate purchases. Reproducibility seeds belong to the traffic generator, outside buyer and merchant interfaces.
+
+The [reservation lifecycle](src/labflow/README.md#order-linked-reservation-lifecycle) includes an animated illustration, executable example and explicit persistence boundary.
 
 ### Target: reserved stock and asynchronous orders
 
@@ -248,6 +251,7 @@ src/labflow/
   catalog.py                   Shared product metadata snapshots
   price_list.py                Store-specific prices and offered SKUs
   orders.py                    Quotations and accepted-order processing lifecycle
+  reservations.py              Order-linked holds, deadlines and terminal proposals
   inventory.py                 Immutable inventory read snapshots and derived availability
   validation.py                Shared integer validation and UTC normalization
   synthetic.py                 Deterministic sale records
