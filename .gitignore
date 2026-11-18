@@ -1,0 +1,12 @@
+# Tool environment and caches
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Build and disposable outputs
+/bin/
+/artifacts/
+/reports/
+
+.DS_Store
