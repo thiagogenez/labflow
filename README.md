@@ -3,7 +3,7 @@
 [![ci](https://github.com/thiagogenez/labflow/actions/workflows/ci.yml/badge.svg)](https://github.com/thiagogenez/labflow/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-An event-driven order-processing system: a small shop with checkout, payments, shipping quotes, refunds, stock, email and analytics. Services in Go and Python exchange events through RabbitMQ, Kafka or SNS + SQS, chosen by configuration.
+An event-driven order-processing system: a small shop with checkout, payments, shipping quotes, refunds, stock, email and analytics. Services in Go and Python exchange events through one message broker per deployment, chosen with `BROKER=rabbitmq|kafka|sqs`.
 
 LabFlow is the application half of a public Platform Engineering and SRE learning lab. Its job is to produce realistic traffic, data and failures for the platform in [labflow-platform](https://github.com/thiagogenez/labflow-platform), where the plan, design decisions and runbooks live. It serves no real customers. The payment provider and the mail server are simulations.
 
@@ -15,7 +15,7 @@ Implementation starts on 2026-11-19. This table is the source of truth for what 
 | --- | --- |
 | Quality gate (pre-commit hooks, commit-message checks, CI) | Configured locally, CI pending first run |
 | Services and Docker Compose environment | Planned |
-| RabbitMQ, Kafka and SNS + SQS adapters | Planned |
+| Message broker adapters (RabbitMQ, Kafka, SNS + SQS) | Planned |
 | Signed multi-arch images on GHCR | Planned |
 
 ## Services
