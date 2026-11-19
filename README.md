@@ -13,7 +13,8 @@ Implementation starts on 2026-11-19. This table is the source of truth for what 
 
 | Capability | Status |
 | --- | --- |
-| Quality gate (pre-commit hooks, commit-message checks, CI) | Configured locally, CI pending first run |
+| Quality gate (pre-commit hooks, commit-message checks, CI) | Running in CI |
+| Contribution workflow (pull request template, ticket references, pull request check) | Configured, CI pending first run |
 | Services and Docker Compose environment | Planned |
 | Message broker adapters (RabbitMQ, Kafka, SNS + SQS) | Planned |
 | Signed multi-arch images on GHCR | Planned |
