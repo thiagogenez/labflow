@@ -39,8 +39,13 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          commits=$(git rev-list "$BASE_SHA..$HEAD_SHA")
+          if git log --no-merges --format='%h %s' "$BASE_SHA..$HEAD_SHA" | grep -iE '^[^ ]+ (merge\b|(fixup|squash|amend)! )'; then
+            echo "::error::Squash the fixup commits and reword the 'Merge' subjects of non-merge commits listed above."
+            exit 1
+          fi
           message_file="$(mktemp)"
-          for sha in $(git rev-list "$BASE_SHA..$HEAD_SHA"); do
+          for sha in $commits; do
             git log -1 --format=%B "$sha" > "$message_file"
             .venv/bin/pre-commit run --hook-stage commit-msg --commit-msg-filename "$message_file"
           done

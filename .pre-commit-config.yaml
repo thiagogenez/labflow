@@ -1,6 +1,4 @@
 # One hook configuration for local commits and CI.
-# Hooks for Terraform, Ansible, Helm, Kubernetes manifests, shell scripts and
-# application code are added with the first files of each type.
 default_install_hook_types: [pre-commit, commit-msg]
 default_stages: [pre-commit]
 minimum_pre_commit_version: "4.7.0"
@@ -26,12 +24,19 @@ repos:
     hooks:
       - id: actionlint
 
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: a6564f5d57444e123433a5c9af733e3975c77229  # frozen: v0.11.0.1-1
+    hooks:
+      - id: shellcheck
+
+  # .github/scripts/check_pull_request.sh mirrors this hook's types for pull request titles.
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: 81d3af62ea96a1f69f0cfa8745f253d3c4740896  # frozen: v4.5.0
     hooks:
       - id: conventional-pre-commit
         stages: [commit-msg]
 
+  # .github/scripts/check_pull_request.sh mirrors the attribution pattern; change both together.
   - repo: local
     hooks:
       # ponytail: pygrep counts bytes, exact for the English subjects used here.
@@ -41,9 +46,15 @@ repos:
         entry: '\A[^\n]{73,}'
         args: [--multiline]
         stages: [commit-msg]
-      - id: no-co-author-trailer
-        name: commit message has no co-author trailer
+      - id: no-attribution-lines
+        name: commit message has no attribution lines
         language: pygrep
-        entry: '(?im)^co-authored-by:'
+        entry: '(?im)^(co-authored-by:|[^\w\n]*generated (with|by) [^\n]{0,40}?\b(claude|copilot|chatgpt|codex|cursor|gemini)\b)'
         args: [--multiline]
+        stages: [commit-msg]
+      - id: ticket-reference
+        name: commit message has a Refs line naming an issue
+        language: pygrep
+        entry: '(?m)(\A(Merge|fixup!|squash!|amend!) |^Refs: thiagogenez/labflow-platform#[1-9][0-9]*[ \t]*\r?$)'
+        args: [--multiline, --negate]
         stages: [commit-msg]
