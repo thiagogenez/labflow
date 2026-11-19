@@ -9,7 +9,7 @@ LabFlow is the application half of a public Platform Engineering and SRE learnin
 
 ## Status
 
-Implementation starts on 2026-11-19. This table is the source of truth for what exists.
+Implementation starts on 2026-11-20. This table is the source of truth for what exists.
 
 | Capability | Status |
 | --- | --- |

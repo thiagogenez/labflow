@@ -7,7 +7,7 @@ Closes thiagogenez/labflow-platform#N
 
 ## Verification
 
-<!-- Commands run and what they showed; say what is local, on AWS or pending. Redact tokens, account IDs and personal data: this text becomes the merge commit message. -->
+<!-- Commands run and what they showed; say what ran on the private cluster, on AWS or is still pending. Redact tokens, account IDs and personal data: this text becomes the merge commit message. -->
 
 ## Limitations
 
