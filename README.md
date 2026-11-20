@@ -15,6 +15,7 @@ Implementation starts on 2026-11-20. This table is the source of truth for what 
 | --- | --- |
 | Quality gate (pre-commit hooks, commit-message checks, CI) | Running in CI |
 | Contribution workflow (pull request template, ticket references, pull request check) | Configured, CI pending first run |
+| Event contracts (CloudEvents JSON Schema) | `order.placed` validated by the hooks; the others land with their producers |
 | Services and Docker Compose environment | Planned |
 | Message broker adapters (RabbitMQ, Kafka, SNS + SQS) | Planned |
 | Signed multi-arch images on GHCR | Planned |
@@ -59,6 +60,20 @@ sequenceDiagram
     O->>Q: order.placed (outbox relay)
     Q->>W: deliver to each consumer
 ```
+
+## Events
+
+Events are [CloudEvents](https://cloudevents.io/) whose JSON Schema contracts live in [`contracts/events/`](contracts/events/). On Kafka, each producer writes to its own topic (`orders`, `payments`, `inventory`) keyed by order ID; on RabbitMQ, the routing key is the event type. Delivery is at least once and unordered, so every consumer is idempotent and tolerates reordering.
+
+| Event type | Producer | Consumers |
+| --- | --- | --- |
+| `labflow.order.placed.v1` | `order-api` | `inventory`, `email-worker`, `analytics-worker` |
+| `labflow.refund.requested.v1` | `order-api` | `payment-api` |
+| `labflow.payment.refunded.v1` | `payment-api` | `order-api` |
+| `labflow.payment.refund_failed.v1` | `payment-api` | `order-api` |
+| `labflow.refund.completed.v1` | `order-api` | `inventory`, `email-worker`, `analytics-worker` |
+| `labflow.inventory.allocated.v1` | `inventory` | `order-api`, `email-worker` |
+| `labflow.inventory.backorder_allocated.v1` | `inventory` | `order-api`, `email-worker` |
 
 ## License
 

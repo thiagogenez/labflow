@@ -24,6 +24,21 @@ repos:
     hooks:
       - id: actionlint
 
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: a76b92851fc9eede9f9bc4073eb55202f34eb0df  # frozen: 0.39.0
+    hooks:
+      - id: check-metaschema
+        name: event schemas are valid JSON Schema
+        files: ^contracts/events/[^/]+\.schema\.json$
+      - id: check-jsonschema
+        name: order.placed example matches its schema
+        files: ^contracts/events/
+        pass_filenames: false
+        args:
+          - --schemafile
+          - contracts/events/labflow.order.placed.v1.schema.json
+          - contracts/events/examples/labflow.order.placed.v1.json
+
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: a6564f5d57444e123433a5c9af733e3975c77229  # frozen: v0.11.0.1-1
     hooks:
