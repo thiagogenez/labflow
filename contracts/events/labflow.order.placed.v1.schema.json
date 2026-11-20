@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "labflow.order.placed.v1",
+  "description": "An order was paid and accepted. Amounts are integers in minor units of the order currency. Every gross amount is its net plus its tax amount, a line's gross amount is its unit price times its quantity, and totals are the sums of the lines and shipping.",
+  "allOf": [{ "$ref": "envelope.schema.json" }],
+  "properties": {
+    "type": { "const": "labflow.order.placed.v1" },
+    "source": { "const": "/order-api" },
+    "subject": { "description": "Equal to data.order_id." },
+    "data": {
+      "type": "object",
+      "required": [
+        "order_id",
+        "currency",
+        "customer",
+        "lines",
+        "shipping",
+        "totals"
+      ],
+      "properties": {
+        "order_id": { "$ref": "envelope.schema.json#/$defs/uuid7" },
+        "currency": {
+          "description": "ISO 4217 code. EUR is the only currency; adding one is an incompatible change (a new major type), because consumers sum amounts without converting.",
+          "const": "EUR"
+        },
+        "customer": {
+          "description": "Only the personal data email-worker needs; brokers keep it for at most 7 days. Never add addresses or other personal data.",
+          "type": "object",
+          "required": ["email", "first_name"],
+          "properties": {
+            "email": { "type": "string", "format": "email", "maxLength": 254 },
+            "first_name": { "type": "string", "minLength": 1, "maxLength": 100 }
+          },
+          "unevaluatedProperties": false
+        },
+        "lines": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "allOf": [{ "$ref": "#/$defs/taxed_amounts" }],
+            "required": [
+              "line_number",
+              "sku",
+              "name",
+              "quantity",
+              "unit_price_gross"
+            ],
+            "properties": {
+              "line_number": { "type": "integer", "minimum": 1 },
+              "sku": {
+                "type": "string",
+                "maxLength": 32,
+                "pattern": "^[A-Z0-9]+(-[A-Z0-9]+)*$"
+              },
+              "name": {
+                "description": "Product name at the time of purchase.",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "quantity": { "type": "integer", "minimum": 1, "maximum": 99 },
+              "unit_price_gross": { "$ref": "#/$defs/amount" }
+            },
+            "unevaluatedProperties": false
+          }
+        },
+        "shipping": {
+          "type": "object",
+          "allOf": [{ "$ref": "#/$defs/taxed_amounts" }],
+          "required": ["zone", "speed", "rate_source"],
+          "properties": {
+            "zone": { "enum": ["DE", "EU-1", "EU-2", "EU-3"] },
+            "speed": { "enum": ["standard", "express"] },
+            "rate_source": {
+              "description": "quote from shipping-api, or flat_rate when the quote failed.",
+              "enum": ["quote", "flat_rate"]
+            }
+          },
+          "unevaluatedProperties": false
+        },
+        "totals": {
+          "type": "object",
+          "allOf": [{ "$ref": "#/$defs/amounts" }],
+          "unevaluatedProperties": false
+        }
+      },
+      "unevaluatedProperties": false
+    }
+  },
+  "$defs": {
+    "amount": {
+      "description": "At most 2^53 - 1, the largest integer every JSON parser reads exactly (RFC 7493).",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "amounts": {
+      "type": "object",
+      "required": ["net_amount", "tax_amount", "gross_amount"],
+      "properties": {
+        "net_amount": { "$ref": "#/$defs/amount" },
+        "tax_amount": { "$ref": "#/$defs/amount" },
+        "gross_amount": { "$ref": "#/$defs/amount" }
+      }
+    },
+    "taxed_amounts": {
+      "allOf": [{ "$ref": "#/$defs/amounts" }],
+      "required": ["tax_rate_bps"],
+      "properties": {
+        "tax_rate_bps": {
+          "description": "VAT rate in basis points: 1900 is 19 %.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
+      }
+    }
+  }
+}

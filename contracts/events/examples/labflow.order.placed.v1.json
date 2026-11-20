@@ -1,0 +1,49 @@
+{
+  "specversion": "1.0",
+  "id": "01a1f874-3e4b-772c-8d7e-d1c457153733",
+  "source": "/order-api",
+  "type": "labflow.order.placed.v1",
+  "subject": "01a1f874-3be8-7fa4-95f5-868d7d69c709",
+  "time": "2026-11-20T10:15:30.123Z",
+  "datacontenttype": "application/json",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "data": {
+    "order_id": "01a1f874-3be8-7fa4-95f5-868d7d69c709",
+    "currency": "EUR",
+    "customer": { "email": "ada@example.com", "first_name": "Ada" },
+    "lines": [
+      {
+        "line_number": 1,
+        "sku": "PIP-ADJ-100",
+        "name": "Adjustable pipette, 10 to 100 µL",
+        "quantity": 1,
+        "unit_price_gross": 8900,
+        "tax_rate_bps": 1900,
+        "net_amount": 7479,
+        "tax_amount": 1421,
+        "gross_amount": 8900
+      },
+      {
+        "line_number": 2,
+        "sku": "NBK-A4-100",
+        "name": "Lab notebook, A4, 100 pages",
+        "quantity": 3,
+        "unit_price_gross": 1250,
+        "tax_rate_bps": 1900,
+        "net_amount": 3151,
+        "tax_amount": 599,
+        "gross_amount": 3750
+      }
+    ],
+    "shipping": {
+      "zone": "DE",
+      "speed": "standard",
+      "rate_source": "quote",
+      "tax_rate_bps": 1900,
+      "net_amount": 496,
+      "tax_amount": 94,
+      "gross_amount": 590
+    },
+    "totals": { "net_amount": 11126, "tax_amount": 2114, "gross_amount": 13240 }
+  }
+}
