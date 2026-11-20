@@ -13,7 +13,7 @@ LabFlow is the order-processing application that runs on [LabFlow Platform](http
 - Give the learner exactly one command per message, say what it should print, and wait for the output.
 - Prefix agent shell commands with `rtk`; use `rtk proxy` when unfiltered output is needed.
 - Keep the tree clean: scratch work stays out of the repository.
-- `psp-simulator` and Mailpit stand in for external systems; say so wherever they appear. Never invent results or traffic.
+- `psp-simulator`, `supplier-simulator` and Mailpit stand in for external systems; say so wherever they appear. Never invent results or traffic.
 
 ## Service Conventions
 

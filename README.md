@@ -5,7 +5,7 @@
 
 An event-driven order-processing system: a small shop with checkout, payments, shipping quotes, refunds, stock, email and analytics. Services in Go and Python exchange events through one message broker per deployment, chosen with `BROKER=rabbitmq|kafka|sqs`.
 
-LabFlow is the application half of a public Platform Engineering and SRE learning lab. Its job is to produce realistic traffic, data and failures for the platform in [labflow-platform](https://github.com/thiagogenez/labflow-platform), where the plan, design decisions and runbooks live. It serves no real customers. The payment provider and the mail server are simulations.
+LabFlow is the application half of a public Platform Engineering and SRE learning lab. Its job is to produce realistic traffic, data and failures for the platform in [labflow-platform](https://github.com/thiagogenez/labflow-platform), where the plan, design decisions and runbooks live. It serves no real customers. The payment provider, the supplier and the mail server are simulations.
 
 ## Status
 
@@ -30,10 +30,11 @@ Planned services:
 | `order-api` | Go | Catalog, server-side cart, checkout, orders and refund requests; transactional outbox |
 | `payment-api` | Go | Charges and refunds through the payment provider; receives its signed webhooks |
 | `shipping-api` | Python | Shipping quotes by weight, destination zone and speed |
-| `inventory` | Go | Stock reads; applies order and refund events |
+| `inventory` | Go | Stock allocation and backorders; goods receipts and automatic replenishment |
 | `email-worker` | Python | Order confirmation, backorder and refund emails |
-| `analytics-worker` | Python | Revenue per minute and top products, net of refunds |
+| `analytics-worker` | Python | Revenue per minute and top products, net of VAT and refunds |
 | `psp-simulator` | Go | Simulated external payment provider, treated as a black box |
+| `supplier-simulator` | Go | Simulated external supplier: accepts purchase orders and delivers stock after a lead time |
 
 ## Order Flow
 
@@ -51,15 +52,18 @@ sequenceDiagram
     participant W as inventory / email / analytics
     B->>P: card details
     P-->>B: token
-    B->>O: POST /orders (Idempotency-Key, token)
+    B->>O: POST /v1/orders (Idempotency-Key, token)
     O->>S: shipping quote (timeout, flat-rate fallback)
-    O->>Pay: charge (idempotent)
+    O->>O: save order as pending_payment
+    O->>Pay: charge (idempotency key = order ID)
     Pay->>P: charge token
-    O->>O: commit order + outbox event
-    O-->>B: 201 Created
+    O->>O: mark paid + outbox event, one transaction
+    O-->>B: 201 Created (402 declined, 202 still pending)
     O->>Q: order.placed (outbox relay)
     Q->>W: deliver to each consumer
 ```
+
+A reconciler resends the same idempotent charge for orders left in `pending_payment`: the order becomes paid when the charge succeeds, or `payment_failed` when it is declined or still unresolved after 15 minutes. A charge that succeeds after that is refunded automatically and the customer is told by email.
 
 ## Events
 
@@ -74,6 +78,16 @@ Events are [CloudEvents](https://cloudevents.io/) whose JSON Schema contracts li
 | `labflow.refund.completed.v1` | `order-api` | `inventory`, `email-worker`, `analytics-worker` |
 | `labflow.inventory.allocated.v1` | `inventory` | `order-api`, `email-worker` |
 | `labflow.inventory.backorder_allocated.v1` | `inventory` | `order-api`, `email-worker` |
+
+## Production Gaps
+
+LabFlow is designed to production standards; only its data and its external systems are simulated. A real shop would also need the following, which the lab deliberately leaves out:
+
+- VAT through the One-Stop Shop, and invoices. Charging German VAT on every EU sale is valid only below the EUR 10,000 yearly threshold for EU distance sales.
+- Erasure and retention of personal data under the GDPR.
+- Fulfilment (picking, shipping, tracking) and returns logistics. Refunds assume the goods come back resellable.
+- An authenticated back office for the catalogue, prices and stock.
+- Customer accounts, 3-D Secure and chargebacks.
 
 ## License
 
