@@ -1,0 +1,6 @@
+# The Go build context is the repository root; send only what images need.
+*
+!libs/go/
+!services/
+**/*_test.go
+**/.env*

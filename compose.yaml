@@ -1,0 +1,107 @@
+# Local development environment: docker compose up --build
+# psp-simulator stands in for an external card payment provider.
+name: labflow
+
+x-go-build: &go-build
+  context: .
+  dockerfile: services/go.Dockerfile
+
+x-telemetry: &telemetry
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+
+# The container rules from AGENTS.md: non-root (the image), read-only root
+# filesystem, no Linux capabilities, no privilege escalation.
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+x-healthcheck: &healthcheck
+  test: ["CMD", "/service", "healthcheck"]
+  interval: 5s
+  timeout: 3s
+  retries: 12
+
+services:
+  postgres:
+    image: postgres:18.7-trixie@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+    environment:
+      POSTGRES_PASSWORD: postgres # local only; the port is not published
+    volumes:
+      - ./compose/postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      # TCP, not the socket: during first-boot init the socket answers before TCP does.
+      test: ["CMD", "pg_isready", "--host", "127.0.0.1", "--username", "postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  jaeger:
+    image: jaegertracing/jaeger:2.23.0@sha256:3823829974ccfc2485d2e48b165579091f32295022ae80ca49704e2f4834116e
+    ports:
+      - "127.0.0.1:16686:16686" # trace UI
+
+  psp-simulator-migrate:
+    <<: *hardening
+    image: labflow/psp-simulator:local
+    build:
+      <<: *go-build
+      args: { SERVICE: psp-simulator }
+    command: ["migrate"]
+    environment:
+      MIGRATIONS_DATABASE_URL: postgres://psp_owner:psp_owner@postgres:5432/psp?sslmode=disable
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  psp-simulator:
+    <<: *hardening
+    image: labflow/psp-simulator:local
+    stop_grace_period: 30s # > SHUTDOWN_DELAY + SHUTDOWN_TIMEOUT, as in Kubernetes
+    build:
+      <<: *go-build
+      args: { SERVICE: psp-simulator }
+    environment:
+      <<: *telemetry
+      DATABASE_URL: postgres://psp_app:psp_app@postgres:5432/psp?sslmode=disable
+      PUBLISHABLE_KEY: pk_test_local
+      SECRET_KEY: sk_test_local
+    ports:
+      - "127.0.0.1:8090:8080"
+    healthcheck: *healthcheck
+    depends_on:
+      psp-simulator-migrate: { condition: service_completed_successfully }
+
+  payment-api-migrate:
+    <<: *hardening
+    image: labflow/payment-api:local
+    build:
+      <<: *go-build
+      args: { SERVICE: payment-api }
+    command: ["migrate"]
+    environment:
+      MIGRATIONS_DATABASE_URL: postgres://payment_owner:payment_owner@postgres:5432/payment?sslmode=disable
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  payment-api:
+    <<: *hardening
+    image: labflow/payment-api:local
+    stop_grace_period: 30s # > SHUTDOWN_DELAY + SHUTDOWN_TIMEOUT, as in Kubernetes
+    build:
+      <<: *go-build
+      args: { SERVICE: payment-api }
+    environment:
+      <<: *telemetry
+      DATABASE_URL: postgres://payment_app:payment_app@postgres:5432/payment?sslmode=disable
+      PSP_BASE_URL: http://psp-simulator:8080
+      PSP_SECRET_KEY: sk_test_local
+    ports:
+      - "127.0.0.1:8081:8080"
+    healthcheck: *healthcheck
+    depends_on:
+      payment-api-migrate: { condition: service_completed_successfully }
+      psp-simulator: { condition: service_healthy }
+
+volumes:
+  postgres-data:
