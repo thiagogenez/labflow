@@ -21,9 +21,10 @@ LabFlow is the order-processing application that runs on [LabFlow Platform](http
 - HTTP services expose `/healthz` (liveness), `/readyz` (dependencies ready) and `/metrics` (Prometheus). Workers expose the same endpoints on an admin port.
 - Every outbound call has an explicit timeout. Shut down gracefully on SIGTERM within the termination grace period.
 - Logs are structured JSON on stdout with the W3C trace ID as correlation ID. Every service installs the OpenTelemetry SDK and configures its exporter only through the standard `OTEL_*` environment variables. Public entry points start a new trace and keep an inbound `traceparent` only as a link; consumers process each event as a child of its `traceparent`, so one trace ID follows each request, such as a checkout or a refund, through every service it reaches; `subject` ties together the traces of one order. Order, user and event IDs never become metric labels.
-- Events are CloudEvents 1.0 in structured JSON mode (message content type `application/cloudevents+json`), described by JSON Schema in `contracts/events/`. `id` is the event ID, `type` carries the major version (`labflow.order.placed.v1`), `subject` is the order ID and `traceparent` carries the trace context. Schemas are closed, and producer tests validate every event against them with format assertion on; consumers never validate, ignore unknown fields and tolerate unknown enum values. Fields are added as optional, never repurposed; an incompatible change is a new major `type`, published alongside the old one until every consumer has moved.
+- Events are CloudEvents 1.0 in structured JSON mode (message content type `application/cloudevents+json`), described by JSON Schema in `contracts/events/`. `id` is the event ID, `type` carries the major version (`labflow.order.placed.v1`), `subject` is the order ID and `traceparent` carries the trace context. Schemas are closed, and producer tests validate every event against them with format assertion on and check the amount sums a schema cannot express; consumers never validate, ignore unknown fields and tolerate unknown enum values. Fields are added as optional, never repurposed; an incompatible change is a new major `type`, published alongside the old one until every consumer has moved.
 - Events carry only the personal data email-worker needs. Logs identify an event by `id`, `type`, `subject` and trace ID, never by its `data`; among consumers, only email-worker stores `data.customer`; broker queues, dead-letter queues and published outbox rows keep events for at most 7 days.
-- Delivery is at least once and unordered. Consumers are idempotent, keeping processed-event records longer than an event can stay in the broker, retry and dead-letter queues combined, and tolerate reordering: they apply only valid state transitions, retry an event whose prerequisite has not arrived yet, or keep aggregates commutative. State changes that emit events use the transactional outbox.
+- Delivery is at least once and unordered. Consumers are idempotent, keeping processed-event records longer than an event can stay in the broker, retry and dead-letter queues combined, and tolerate reordering: they apply only valid state transitions, retry an event whose prerequisite has not arrived yet with backoff up to a limit before dead-lettering it, or keep aggregates commutative. Queues, bindings and topics exist before producers run; RabbitMQ publishes are `mandatory`, and Kafka consumers start from the earliest offset. State changes that emit events use the transactional outbox.
+- Request bodies and event fields are untrusted input: reject control characters in customer-supplied text, and email templates autoescape.
 - The broker is selected by `BROKER` (`rabbitmq`, `kafka` or `sqs`) behind one small adapter per language. Exactly one broker per deployment.
 - Card numbers never reach LabFlow services; only provider tokens do.
 
@@ -38,9 +39,10 @@ LabFlow is the order-processing application that runs on [LabFlow Platform](http
 
 ## Go Rules
 
-- Go 1.27.x, pinned with `go` and `toolchain` in each service's `go.mod`; one module per service.
+- Go 1.27.x, pinned with `go` and `toolchain` in each service's `go.mod`; one module per service, sharing `libs/go` through a `replace` directive.
 - gofmt and goimports formatting; golangci-lint v2 with the `standard` linter set; `go test -race ./...`.
 - The editor matches CI: VS Code uses golangci-lint v2 as its lint tool, so it underlines exactly what CI rejects. Shared settings live in `.vscode/`.
+- Integration tests run against real PostgreSQL in a throwaway container (`libs/go/pgtest`, Testcontainers); `make test` runs every module with `-race`.
 - Table-driven tests with the standard `testing` package. Wrap errors with `%w`; pass `context.Context` first on I/O paths; no mutable globals.
 
 ## Images
