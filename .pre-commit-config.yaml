@@ -39,6 +39,26 @@ repos:
           - contracts/events/labflow.order.placed.v1.schema.json
           - contracts/events/examples/labflow.order.placed.v1.json
 
+  # golangci-lint runs once per Go module (scripts/lint_go_modules.sh); the
+  # hook only pins and builds the binary.
+  - repo: https://github.com/golangci/golangci-lint
+    rev: 25c5369a93aacb8cccea0d46e1569ca4a194564d  # frozen: v2.15.0
+    hooks:
+      - id: golangci-lint-full
+        name: golangci-lint, gofmt, goimports and go mod tidy in every Go module
+        entry: scripts/lint_go_modules.sh
+        types: [file]
+        types_or: [go, go-mod, go-sum]
+      - id: golangci-lint-config-verify
+
+  - repo: local
+    hooks:
+      - id: hadolint
+        name: hadolint
+        language: docker_image
+        entry: hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d hadolint
+        types: [dockerfile]
+
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: a6564f5d57444e123433a5c9af733e3975c77229  # frozen: v0.11.0.1-1
     hooks:
