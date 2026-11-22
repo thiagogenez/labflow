@@ -24,6 +24,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Install Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: libs/go/go.mod
+          cache-dependency-path: "**/go.sum"
+
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
@@ -49,3 +55,26 @@ jobs:
             git log -1 --format=%B "$sha" > "$message_file"
             .venv/bin/pre-commit run --hook-stage commit-msg --commit-msg-filename "$message_file"
           done
+
+  go-test:
+    name: go tests
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: libs/go/go.mod
+          cache-dependency-path: "**/go.sum"
+
+      - name: Run every module's tests with the race detector
+        run: make test
+        env:
+          # The runner is ephemeral and pgtest removes its container, so the
+          # Ryuk reaper (pulled by tag, given the Docker socket) is not needed.
+          TESTCONTAINERS_RYUK_DISABLED: "true"
