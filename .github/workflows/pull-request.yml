@@ -24,11 +24,4 @@ jobs:
           persist-credentials: false
 
       - name: Check title, description and ticket references
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          GH_TOKEN: ${{ github.token }}
-        run: .github/scripts/check_pull_request.sh
+        uses: thiagogenez/labflow-platform/.github/actions/check-pull-request@9c4f53eac80f41a53c231fde19d42ed065500f39 # labflow-platform#31; same pin in ci.yml

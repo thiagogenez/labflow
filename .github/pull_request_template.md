@@ -15,7 +15,7 @@ Closes thiagogenez/labflow-platform#N
 
 ## Review
 
-<!-- Three agents, two rounds each: applied, rejected and withdrawn counts, consensus items, main outcomes. Describe unresolved security findings only in a private security advisory. -->
+<!-- Three agents, two rounds each. A ledger per reviewer (findings by severity, unique to that reviewer, applied, rejected, deferred), then consensus items, rejections with reasons and escaped defects. Describe unresolved security findings only in a private security advisory. -->
 
 ## Checklist
 
