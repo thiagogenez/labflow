@@ -1,4 +1,6 @@
-# One hook configuration for local commits and CI.
+# One hook configuration for local commits and CI. The shared hooks are identical
+# in labflow and labflow-platform; each repository appends the hooks for its own
+# files after the "Repository hooks" marker.
 default_install_hook_types: [pre-commit, commit-msg]
 default_stages: [pre-commit]
 minimum_pre_commit_version: "4.7.0"
@@ -13,17 +15,68 @@ repos:
       - id: end-of-file-fixer
       - id: trailing-whitespace
 
-  - repo: https://github.com/gitleaks/gitleaks
-    # v8.30.1 was tagged off a release branch, so autoupdate cannot see it.
-    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e  # frozen: v8.30.1
+  # Gitleaks scans staged changes at commit time; the quality gate, where nothing
+  # is staged, scans only the history reachable from HEAD, merge resolutions,
+  # file-type changes and files marked binary included.
+  - repo: local
     hooks:
       - id: gitleaks
+        name: no secrets in staged changes
+        language: golang
+        additional_dependencies: &gitleaks [github.com/zricethezav/gitleaks/v8@v8.30.1]
+        entry: gitleaks git --pre-commit --redact --staged --verbose
+        pass_filenames: false
+      - id: gitleaks-history
+        name: no secrets in the committed history
+        language: golang
+        additional_dependencies: *gitleaks
+        entry: gitleaks git --redact --verbose "--log-opts=--diff-merges=first-parent --diff-filter=uxdb --text HEAD"
+        pass_filenames: false
+        always_run: true
+        stages: [manual]
 
   - repo: https://github.com/rhysd/actionlint
     rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # frozen: v1.7.12
     hooks:
       - id: actionlint
 
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: a6564f5d57444e123433a5c9af733e3975c77229  # frozen: v0.11.0.1-1
+    hooks:
+      - id: shellcheck
+
+  # labflow-platform's check-pull-request action mirrors this hook's types for titles.
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: 81d3af62ea96a1f69f0cfa8745f253d3c4740896  # frozen: v4.5.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+
+  # labflow-platform's check-pull-request action mirrors the attribution pattern and
+  # counts title bytes as commit-subject-length does; change both together.
+  - repo: local
+    hooks:
+      # ponytail: pygrep counts bytes, exact for the English subjects used here.
+      - id: commit-subject-length
+        name: commit subject is at most 72 bytes
+        language: pygrep
+        entry: '\A[^\n]{73,}'
+        args: [--multiline]
+        stages: [commit-msg]
+      - id: no-attribution-lines
+        name: commit message has no attribution lines
+        language: pygrep
+        entry: '(?im)^(co-authored-by:|[^\w\n]*generated (with|by) [^\n]{0,40}?\b(claude|copilot|chatgpt|codex|cursor|gemini)\b)'
+        args: [--multiline]
+        stages: [commit-msg]
+      - id: ticket-reference
+        name: commit message has a Refs line naming an issue
+        language: pygrep
+        entry: '(?m)(\A(Merge|fixup!|squash!|amend!) |^Refs: thiagogenez/labflow-platform#[1-9][0-9]*[ \t]*\r?$)'
+        args: [--multiline, --negate]
+        stages: [commit-msg]
+
+  # Repository hooks
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: a76b92851fc9eede9f9bc4073eb55202f34eb0df  # frozen: 0.39.0
     hooks:
@@ -58,38 +111,3 @@ repos:
         language: docker_image
         entry: hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d hadolint
         types: [dockerfile]
-
-  - repo: https://github.com/shellcheck-py/shellcheck-py
-    rev: a6564f5d57444e123433a5c9af733e3975c77229  # frozen: v0.11.0.1-1
-    hooks:
-      - id: shellcheck
-
-  # .github/scripts/check_pull_request.sh mirrors this hook's types for pull request titles.
-  - repo: https://github.com/compilerla/conventional-pre-commit
-    rev: 81d3af62ea96a1f69f0cfa8745f253d3c4740896  # frozen: v4.5.0
-    hooks:
-      - id: conventional-pre-commit
-        stages: [commit-msg]
-
-  # .github/scripts/check_pull_request.sh mirrors the attribution pattern; change both together.
-  - repo: local
-    hooks:
-      # ponytail: pygrep counts bytes, exact for the English subjects used here.
-      - id: commit-subject-length
-        name: commit subject is at most 72 characters
-        language: pygrep
-        entry: '\A[^\n]{73,}'
-        args: [--multiline]
-        stages: [commit-msg]
-      - id: no-attribution-lines
-        name: commit message has no attribution lines
-        language: pygrep
-        entry: '(?im)^(co-authored-by:|[^\w\n]*generated (with|by) [^\n]{0,40}?\b(claude|copilot|chatgpt|codex|cursor|gemini)\b)'
-        args: [--multiline]
-        stages: [commit-msg]
-      - id: ticket-reference
-        name: commit message has a Refs line naming an issue
-        language: pygrep
-        entry: '(?m)(\A(Merge|fixup!|squash!|amend!) |^Refs: thiagogenez/labflow-platform#[1-9][0-9]*[ \t]*\r?$)'
-        args: [--multiline, --negate]
-        stages: [commit-msg]

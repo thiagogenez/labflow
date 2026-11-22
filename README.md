@@ -14,9 +14,9 @@ Implementation starts on 2026-11-20. This table is the source of truth for what 
 | Capability | Status |
 | --- | --- |
 | Quality gate (pre-commit hooks, commit-message checks, CI) | Running in CI |
-| Contribution workflow (pull request template, ticket references, pull request check) | Configured, CI pending first run |
+| Contribution workflow (pull request template, ticket references, pull request check) | Running in CI |
 | Event contracts (CloudEvents JSON Schema) | `order.placed` validated by the hooks; the others land with their producers |
-| Payments: `psp-simulator` and `payment-api` in Docker Compose | Tested locally; CI pending first run |
+| Payments: `psp-simulator` and `payment-api` in Docker Compose | Compose tested locally; Go tests in CI |
 | Other services (checkout, stock, shipping, email, analytics, storefront) | Planned |
 | Message broker adapters (RabbitMQ, Kafka, SNS + SQS) | Planned |
 | Signed multi-arch images on GHCR | Planned |
