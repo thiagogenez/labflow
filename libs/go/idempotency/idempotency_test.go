@@ -1,6 +1,7 @@
 package idempotency_test
 
 import (
+	"encoding/hex"
 	"io"
 	"log/slog"
 	"net/http"
@@ -223,5 +224,17 @@ func waitFor(t *testing.T, cond func() bool) {
 			t.Fatal("condition not met within 5s")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A handler sees the fingerprint Middleware compares requests by: the same
+// method, path and body bytes give the same fingerprint, and any byte differs.
+func TestFingerprintFrom(t *testing.T) {
+	h := newStore(t).Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, hex.EncodeToString(idempotency.FingerprintFrom(r.Context())))
+	}))
+	a, b, c := send(h, "k1", `{"a":1}`), send(h, "k2", `{"a":1}`), send(h, "k3", "{\"a\":1}\n")
+	if a.Body.Len() != 64 || a.Body.String() != b.Body.String() || a.Body.String() == c.Body.String() {
+		t.Fatalf("fingerprints %q %q %q: want equal for equal bytes, different otherwise", a.Body, b.Body, c.Body)
 	}
 }

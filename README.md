@@ -15,9 +15,10 @@ Implementation starts on 2026-11-20. This table is the source of truth for what 
 | --- | --- |
 | Quality gate (pre-commit hooks, commit-message checks, CI) | Running in CI |
 | Contribution workflow (pull request template, ticket references, pull request check) | Running in CI |
-| Event contracts (CloudEvents JSON Schema) | `order.placed` validated by the hooks; the others land with their producers |
+| Event contracts (CloudEvents JSON Schema) | `order.placed` validated by the hooks and by order-api's producer tests; the others land with their producers |
 | Payments: `psp-simulator` and `payment-api` in Docker Compose | Compose tested locally; Go tests in CI |
-| Other services (checkout, stock, shipping, email, analytics, storefront) | Planned |
+| Checkout: `order-api` (catalogue, quotes, orders, outbox) in Docker Compose | Compose tested locally; Go tests in CI; the outbox relay lands with RabbitMQ, and the payment reconciler with `shipping-api` |
+| Other services (stock, shipping, email, analytics, storefront) | Planned |
 | Message broker adapters (RabbitMQ, Kafka, SNS + SQS) | Planned |
 | Signed multi-arch images on GHCR | Planned |
 
@@ -92,31 +93,42 @@ docker compose up --build --wait
 
 | Address | Service |
 | --- | --- |
+| <http://localhost:8082> | `order-api`, the shop's public API |
 | <http://localhost:8081> | `payment-api` |
 | <http://localhost:8090> | `psp-simulator`, the simulated payment provider |
 | <http://localhost:16686> | Jaeger, the trace viewer |
 
-Pay with a test card:
+Order with a test card: list the products, ask for a quote, then pay exactly the total the quote showed.
 
 ```sh
+curl -s localhost:8082/v1/products | jq -c '.products[] | {sku, name, unit_price_gross}'
+lines='[{"sku":"PIP-ADJ-100","quantity":1},{"sku":"BOOK-LABTECH","quantity":1}]'
+total=$(curl -s localhost:8082/v1/quotes -H 'Content-Type: application/json' \
+  -d "{\"shipping_country\":\"DE\",\"shipping_speed\":\"standard\",\"lines\":$lines}" | jq .totals.gross_amount)
 publishable_key=pk_test_local # the local test key set in compose.yaml
 card=$(docker compose exec -T psp-simulator /service cards --brand visa --outcome approve)
 token=$(curl -s localhost:8090/v1/tokens -H "Authorization: Bearer $publishable_key" \
   -H 'Content-Type: application/json' -d "$card" | jq -r .id)
-order=$(.venv/bin/python -c 'import uuid; print(uuid.uuid7())') # order IDs are UUIDv7
-curl -s localhost:8081/v1/payments -H "Idempotency-Key: \"$order\"" -H 'Content-Type: application/json' \
-  -d "{\"order_id\":\"$order\",\"token\":\"$token\",\"amount\":13240,\"currency\":\"EUR\"}"
+curl -s localhost:8082/v1/orders -H "Idempotency-Key: \"$(uuidgen)\"" -H 'Content-Type: application/json' -d @- <<JSON
+{"customer": {"email": "ada@example.com", "first_name": "Ada", "last_name": "Lovelace"},
+ "shipping_address": {"line1": "Musterstraße 1", "line2": "", "postal_code": "10115", "city": "Berlin", "country": "DE"},
+ "shipping_speed": "standard", "lines": $lines, "payment_token": "$token", "expected_total": $total}
+JSON
 ```
+
+The answer carries the order and its `access_token`; `GET /v1/orders/{order_id}` with `Authorization: Bearer <access_token>` reads it back. A total that no longer matches the quote gets 409 `price_changed` with the new quote, and nothing is charged.
 
 The test cards are fictitious and work only against `psp-simulator`, which validates them like a real provider (check digit, brand, expiry, security code). `--brand` is `visa`, `mastercard` or `amex`; `--outcome` chooses what happens:
 
-| Outcome | psp-simulator | payment-api answers |
+| Outcome | psp-simulator | order-api answers |
 | --- | --- | --- |
-| `approve` | charges at once | 201, succeeded |
-| `decline` | refuses: insufficient funds | 402 |
-| `slow` | charges after 10 seconds | 202, pending; its resolver settles it |
-| `pending` | pending, approved after 30 seconds | 202, pending; then succeeded |
-| `pending_decline` | pending, refused after 30 seconds | 202, pending; then failed |
+| `approve` | charges at once | 201, paid; `order.placed` is written to the outbox |
+| `decline` | refuses: insufficient funds | 402, with the order |
+| `slow` | charges after 10 seconds | 202, pending |
+| `pending` | pending, approved after 30 seconds | 202, pending |
+| `pending_decline` | pending, refused after 30 seconds | 202, pending |
+
+A 202 order is not yet reconciled automatically: it stays `pending_payment`, without `order.placed`, even after payment-api settles its charge, until the client retries the same checkout after its stored answer expires, or the payment reconciler arrives. `orders_pending_payment` on `/metrics` counts such orders.
 
 `make test` runs every Go module's tests against real PostgreSQL in throwaway containers.
 
@@ -124,7 +136,7 @@ The test cards are fictitious and work only against `psp-simulator`, which valid
 
 LabFlow is designed to production standards; only its data and its external systems are simulated. A real shop would also need the following, which the lab deliberately leaves out:
 
-- VAT through the One-Stop Shop, and invoices. Charging German VAT on every EU sale is valid only below the EUR 10,000 yearly threshold for EU distance sales.
+- VAT through the One-Stop Shop, and invoices. Charging German VAT (19 % or 7 %) on every EU sale is valid only while EU distance sales stay at or below EUR 10,000 in both the current and the previous calendar year.
 - Erasure and retention of personal data under the GDPR.
 - Fulfilment (picking, shipping, tracking) and returns logistics. Refunds assume the goods come back resellable.
 - An authenticated back office for the catalogue, prices and stock.

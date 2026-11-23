@@ -40,7 +40,7 @@ LabFlow is the order-processing application that runs on [LabFlow Platform](http
 ## Go Rules
 
 - Go 1.27.x, pinned with `go` and `toolchain` in each service's `go.mod`; one module per service, sharing `libs/go` through a `replace` directive.
-- gofmt and goimports formatting; golangci-lint v2 with the `standard` linter set; `go test -race ./...`.
+- gofmt and goimports formatting; golangci-lint v2 with the `standard` linter set plus revive's `exported` and `package-comments` rules, so every package and exported name has a doc comment; `go test -race ./...`.
 - The editor matches CI: VS Code uses golangci-lint v2 as its lint tool, so it underlines exactly what CI rejects. Shared settings live in `.vscode/`.
 - Integration tests run against real PostgreSQL in a throwaway container (`libs/go/pgtest`, Testcontainers); `make test` runs every module with `-race`.
 - Table-driven tests with the standard `testing` package. Wrap errors with `%w`; pass `context.Context` first on I/O paths; no mutable globals.

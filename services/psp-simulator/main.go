@@ -56,7 +56,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	case "serve":
 		return serve(ctx)
 	case "migrate":
-		return migrate(ctx)
+		return postgres.MigrateFromEnv(ctx, service, idempotency.Migration, migrations.Migration)
 	case "healthcheck":
 		return httpserver.Probe(ctx, config.FromEnviron().String("HTTP_ADDR", ":8080"))
 	case "cards":
@@ -104,21 +104,6 @@ func serve(ctx context.Context) error {
 	mux := http.NewServeMux()
 	psp.Register(mux, psp.NewStore(pool), idem, log, cfg)
 	return httpserver.New(httpCfg, log, mux, pool.Ping).Run(ctx)
-}
-
-func migrate(ctx context.Context) error {
-	env := config.FromEnviron()
-	dsn := env.Required("MIGRATIONS_DATABASE_URL")
-	// Long enough for real DDL, short enough that a stuck migration fails the
-	// job instead of holding the service's start forever.
-	timeout := env.Duration("MIGRATION_TIMEOUT", 10*time.Minute)
-	if err := env.Err(); err != nil {
-		return fmt.Errorf("invalid configuration: %w", err)
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	log := logging.New(os.Stdout, service, slog.LevelInfo)
-	return postgres.Migrate(ctx, dsn, log, idempotency.Migration, migrations.Migration)
 }
 
 // cards prints a valid test card as the JSON body of POST /v1/tokens.

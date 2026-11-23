@@ -3,6 +3,14 @@ version: "2"
 
 linters:
   default: standard
+  enable:
+    - revive
+  settings:
+    revive:
+      rules:
+        # Every package and exported name has a doc comment (D57).
+        - name: exported
+        - name: package-comments
 
 formatters:
   enable:

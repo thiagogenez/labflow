@@ -1,0 +1,6 @@
+{
+  "description": "Order access token test vector (D56): HMAC-SHA-256 over the UTF-8 bytes of the lowercase, hyphenated order UUID, encoded as unpadded base64url. The key is a public, deliberately trivial test key. order-api and email-worker both test against it.",
+  "key_base64": "eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg=",
+  "order_id": "01a1f874-3be8-7fa4-95f5-868d7d69c709",
+  "expected": "veArqLdC59pvrGw1xJNNgrHfE8kCoR6ANLJrc9kxvko"
+}
