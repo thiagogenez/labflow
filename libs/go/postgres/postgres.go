@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,6 +15,9 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
+
+	"github.com/thiagogenez/labflow/libs/go/config"
+	"github.com/thiagogenez/labflow/libs/go/logging"
 )
 
 // Every statement and lock wait is bounded, so a stalled database fails a
@@ -106,4 +110,21 @@ func createGooseSchema(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("create goose schema: %w", err)
 	}
 	return tx.Commit()
+}
+
+// MigrateFromEnv runs a service's `migrate` command: it applies the
+// migrations to MIGRATIONS_DATABASE_URL, the schema owner's connection,
+// within MIGRATION_TIMEOUT. The timeout is long enough for real DDL and short
+// enough that a stuck migration fails the job instead of holding the
+// service's start forever.
+func MigrateFromEnv(ctx context.Context, service string, migrations ...Migration) error {
+	env := config.FromEnviron()
+	dsn := env.Required("MIGRATIONS_DATABASE_URL")
+	timeout := env.Duration("MIGRATION_TIMEOUT", 10*time.Minute)
+	if err := env.Err(); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return Migrate(ctx, dsn, logging.New(os.Stdout, service, slog.LevelInfo), migrations...)
 }

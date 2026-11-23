@@ -67,11 +67,25 @@ func NewStore(pool *pgxpool.Pool, log *slog.Logger) *Store {
 
 type keyContext struct{}
 
+// claimed is what Middleware hands the handler about the request it claimed.
+type claimed struct {
+	key         string
+	fingerprint []byte
+}
+
 // KeyFrom returns the request's decoded idempotency key inside a handler
 // wrapped by Middleware.
 func KeyFrom(ctx context.Context) string {
-	k, _ := ctx.Value(keyContext{}).(string)
-	return k
+	c, _ := ctx.Value(keyContext{}).(claimed)
+	return c.key
+}
+
+// FingerprintFrom returns the fingerprint Middleware compares requests by, so
+// a handler that keeps its own record of the key judges "the same request"
+// exactly as Middleware does.
+func FingerprintFrom(ctx context.Context) []byte {
+	c, _ := ctx.Value(keyContext{}).(claimed)
+	return c.fingerprint
 }
 
 // Quote encodes a key as a Structured Field String, the form the draft
@@ -116,7 +130,7 @@ func (s *Store) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		r = r.WithContext(context.WithValue(r.Context(), keyContext{}, key))
+		r = r.WithContext(context.WithValue(r.Context(), keyContext{}, claimed{key: key, fingerprint: fp}))
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		rec := &recorder{header: http.Header{}, status: http.StatusOK}
 		next.ServeHTTP(rec, r)

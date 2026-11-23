@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -42,5 +43,12 @@ func TestConcurrentMigrators(t *testing.T) {
 		if err := <-errs; err != nil {
 			t.Fatalf("concurrent migrate: %v", err)
 		}
+	}
+}
+
+func TestMigrateFromEnvNeedsItsConnection(t *testing.T) {
+	t.Setenv("MIGRATIONS_DATABASE_URL", "")
+	if err := postgres.MigrateFromEnv(t.Context(), "test"); err == nil || !strings.Contains(err.Error(), "MIGRATIONS_DATABASE_URL") {
+		t.Fatalf("MigrateFromEnv without a connection: %v, want a configuration error", err)
 	}
 }
