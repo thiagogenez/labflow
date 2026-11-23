@@ -28,7 +28,6 @@ services:
     environment:
       POSTGRES_PASSWORD: postgres # local only; the port is not published
     volumes:
-      - ./compose/postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
       - postgres-data:/var/lib/postgresql
     healthcheck:
       # TCP, not the socket: during first-boot init the socket answers before TCP does.
@@ -36,6 +35,22 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
+
+  # Creates each service's database and roles if missing, on every start, so
+  # a volume from an older revision gets the databases a newer one adds.
+  postgres-provision:
+    <<: *hardening
+    image: postgres:18.7-trixie@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+    user: postgres
+    entrypoint: ["bash", "/provision.sh"]
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: postgres # local only; the port is not published
+    volumes:
+      - ./compose/postgres/provision.sh:/provision.sh:ro
+    depends_on:
+      postgres: { condition: service_healthy }
 
   jaeger:
     image: jaegertracing/jaeger:2.23.0@sha256:3823829974ccfc2485d2e48b165579091f32295022ae80ca49704e2f4834116e
@@ -52,7 +67,7 @@ services:
     environment:
       MIGRATIONS_DATABASE_URL: postgres://psp_owner:psp_owner@postgres:5432/psp?sslmode=disable
     depends_on:
-      postgres: { condition: service_healthy }
+      postgres-provision: { condition: service_completed_successfully }
 
   psp-simulator:
     <<: *hardening
@@ -82,7 +97,7 @@ services:
     environment:
       MIGRATIONS_DATABASE_URL: postgres://payment_owner:payment_owner@postgres:5432/payment?sslmode=disable
     depends_on:
-      postgres: { condition: service_healthy }
+      postgres-provision: { condition: service_completed_successfully }
 
   payment-api:
     <<: *hardening
@@ -102,6 +117,56 @@ services:
     depends_on:
       payment-api-migrate: { condition: service_completed_successfully }
       psp-simulator: { condition: service_healthy }
+
+  order-api-migrate:
+    <<: *hardening
+    image: labflow/order-api:local
+    build:
+      <<: *go-build
+      args: { SERVICE: order-api }
+    command: ["migrate"]
+    environment:
+      MIGRATIONS_DATABASE_URL: postgres://orders_owner:orders_owner@postgres:5432/orders?sslmode=disable
+    depends_on:
+      postgres-provision: { condition: service_completed_successfully }
+
+  # Loads the catalogue file with the data role, as a job like the migrations (D68).
+  order-api-catalogue:
+    <<: *hardening
+    image: labflow/order-api:local
+    build:
+      <<: *go-build
+      args: { SERVICE: order-api }
+    command: ["catalogue", "import", "/etc/order-api/catalogue.json"]
+    environment:
+      DATABASE_URL: postgres://orders_app:orders_app@postgres:5432/orders?sslmode=disable
+    volumes:
+      - ./services/order-api/catalogue.json:/etc/order-api/catalogue.json:ro
+    depends_on:
+      order-api-migrate: { condition: service_completed_successfully }
+
+  order-api:
+    <<: *hardening
+    image: labflow/order-api:local
+    stop_grace_period: 30s # > SHUTDOWN_DELAY + SHUTDOWN_TIMEOUT, as in Kubernetes
+    build:
+      <<: *go-build
+      args: { SERVICE: order-api }
+    environment:
+      <<: *telemetry
+      DATABASE_URL: postgres://orders_app:orders_app@postgres:5432/orders?sslmode=disable
+      PAYMENT_API_URL: http://payment-api:8080
+      FLAT_RATES_FILE: /etc/order-api/flat-rates.json
+      # Local only, not a secret: the clusters read the key from Vault (D56).
+      ORDER_TOKEN_KEY: eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg= # 32 times x
+    volumes:
+      - ./services/order-api/flat-rates.json:/etc/order-api/flat-rates.json:ro
+    ports:
+      - "127.0.0.1:8082:8080"
+    healthcheck: *healthcheck
+    depends_on:
+      order-api-catalogue: { condition: service_completed_successfully }
+      payment-api: { condition: service_healthy }
 
 volumes:
   postgres-data:

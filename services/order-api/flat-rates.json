@@ -1,0 +1,6 @@
+{
+  "DE": { "standard": 590, "express": 1290 },
+  "EU-1": { "standard": 990, "express": 1990 },
+  "EU-2": { "standard": 1290, "express": 2490 },
+  "EU-3": { "standard": 1590, "express": 2990 }
+}

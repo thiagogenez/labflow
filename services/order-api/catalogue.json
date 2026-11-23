@@ -1,0 +1,19 @@
+[
+  { "sku": "BKR-GLS-250", "name": "Glass beaker, 250 mL", "unit_price_gross": 590, "tax_rate_bps": 1900, "weight_grams": 150 },
+  { "sku": "BOOK-LABTECH", "name": "Laboratory techniques handbook", "unit_price_gross": 4900, "tax_rate_bps": 700, "weight_grams": 900 },
+  { "sku": "BOOK-SAFETY", "name": "Laboratory safety handbook", "unit_price_gross": 3900, "tax_rate_bps": 700, "weight_grams": 600 },
+  { "sku": "BOOK-STATS", "name": "Statistics for experimental scientists", "unit_price_gross": 5900, "tax_rate_bps": 700, "weight_grams": 1100 },
+  { "sku": "CAL-SCI-01", "name": "Scientific calculator", "unit_price_gross": 2490, "tax_rate_bps": 1900, "weight_grams": 200 },
+  { "sku": "COAT-LAB-M", "name": "Lab coat, cotton, size M", "unit_price_gross": 3490, "tax_rate_bps": 1900, "weight_grams": 700 },
+  { "sku": "GLV-NIT-L", "name": "Nitrile gloves, size L, box of 100", "unit_price_gross": 1190, "tax_rate_bps": 1900, "weight_grams": 600 },
+  { "sku": "GLV-NIT-M", "name": "Nitrile gloves, size M, box of 100", "unit_price_gross": 1190, "tax_rate_bps": 1900, "weight_grams": 600 },
+  { "sku": "LBL-PRN-01", "name": "Label printer for sample tubes", "unit_price_gross": 18900, "tax_rate_bps": 1900, "weight_grams": 1400 },
+  { "sku": "LBL-ROLL-500", "name": "Cryogenic labels, roll of 500", "unit_price_gross": 2490, "tax_rate_bps": 1900, "weight_grams": 300 },
+  { "sku": "MKR-PERM-4", "name": "Permanent lab markers, pack of 4", "unit_price_gross": 690, "tax_rate_bps": 1900, "weight_grams": 60 },
+  { "sku": "NBK-A4-100", "name": "Lab notebook, A4, 100 pages", "unit_price_gross": 1250, "tax_rate_bps": 1900, "weight_grams": 450 },
+  { "sku": "PIP-ADJ-100", "name": "Adjustable pipette, 10 to 100 µL", "unit_price_gross": 8900, "tax_rate_bps": 1900, "weight_grams": 160 },
+  { "sku": "PIP-ADJ-1000", "name": "Adjustable pipette, 100 to 1000 µL", "unit_price_gross": 9400, "tax_rate_bps": 1900, "weight_grams": 180 },
+  { "sku": "STP-HVY-01", "name": "Heavy-duty stapler", "unit_price_gross": 1990, "tax_rate_bps": 1900, "weight_grams": 900 },
+  { "sku": "TIP-RACK-200", "name": "Pipette tips, 200 µL, rack of 96", "unit_price_gross": 690, "tax_rate_bps": 1900, "weight_grams": 120 },
+  { "sku": "TUBE-CEN-50", "name": "Centrifuge tubes, 50 mL, pack of 25", "unit_price_gross": 1490, "tax_rate_bps": 1900, "weight_grams": 400 }
+]

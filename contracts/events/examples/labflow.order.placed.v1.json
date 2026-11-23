@@ -10,7 +10,10 @@
   "data": {
     "order_id": "01a1f874-3be8-7fa4-95f5-868d7d69c709",
     "currency": "EUR",
-    "customer": { "email": "ada@example.com", "first_name": "Ada" },
+    "customer": {
+      "email": "ada@example.com",
+      "first_name": "Ada"
+    },
     "lines": [
       {
         "line_number": 1,
@@ -33,17 +36,45 @@
         "net_amount": 3151,
         "tax_amount": 599,
         "gross_amount": 3750
+      },
+      {
+        "line_number": 3,
+        "sku": "BOOK-LABTECH",
+        "name": "Laboratory techniques handbook",
+        "quantity": 1,
+        "unit_price_gross": 4900,
+        "tax_rate_bps": 700,
+        "net_amount": 4579,
+        "tax_amount": 321,
+        "gross_amount": 4900
       }
     ],
     "shipping": {
       "zone": "DE",
       "speed": "standard",
       "rate_source": "quote",
-      "tax_rate_bps": 1900,
-      "net_amount": 496,
-      "tax_amount": 94,
-      "gross_amount": 590
+      "net_amount": 511,
+      "tax_amount": 79,
+      "gross_amount": 590,
+      "tax_breakdown": [
+        {
+          "tax_rate_bps": 1900,
+          "net_amount": 357,
+          "tax_amount": 68,
+          "gross_amount": 425
+        },
+        {
+          "tax_rate_bps": 700,
+          "net_amount": 154,
+          "tax_amount": 11,
+          "gross_amount": 165
+        }
+      ]
     },
-    "totals": { "net_amount": 11126, "tax_amount": 2114, "gross_amount": 13240 }
+    "totals": {
+      "net_amount": 15720,
+      "tax_amount": 2420,
+      "gross_amount": 18140
+    }
   }
 }
