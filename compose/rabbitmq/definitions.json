@@ -1,0 +1,52 @@
+{
+  "users": [
+    { "name": "admin", "password": "admin", "tags": ["administrator"] },
+    { "name": "order-api", "password": "order-api", "tags": [] }
+  ],
+  "vhosts": [{ "name": "labflow" }],
+  "permissions": [
+    { "user": "admin", "vhost": "labflow", "configure": ".*", "write": ".*", "read": ".*" },
+    { "user": "order-api", "vhost": "labflow", "configure": "^$", "write": "^labflow\\.events$", "read": "^$" }
+  ],
+  "topic_permissions": [
+    { "user": "order-api", "vhost": "labflow", "exchange": "labflow.events", "write": "^labflow\\.order\\.", "read": "^$" }
+  ],
+  "exchanges": [
+    { "name": "labflow.events", "vhost": "labflow", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "labflow.dead-letter", "vhost": "labflow", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {} }
+  ],
+  "queues": [
+    { "name": "email-worker", "vhost": "labflow", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum" } },
+    { "name": "email-worker.dead-letter", "vhost": "labflow", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum" } }
+  ],
+  "bindings": [
+    { "source": "labflow.events", "vhost": "labflow", "destination": "email-worker", "destination_type": "queue", "routing_key": "labflow.order.placed.v1", "arguments": {} },
+    { "source": "labflow.dead-letter", "vhost": "labflow", "destination": "email-worker.dead-letter", "destination_type": "queue", "routing_key": "email-worker", "arguments": {} }
+  ],
+  "policies": [
+    {
+      "vhost": "labflow",
+      "name": "email-worker",
+      "pattern": "^email-worker$",
+      "apply-to": "quorum_queues",
+      "priority": 0,
+      "definition": {
+        "dead-letter-exchange": "labflow.dead-letter",
+        "dead-letter-routing-key": "email-worker",
+        "dead-letter-strategy": "at-least-once",
+        "overflow": "reject-publish",
+        "max-length": 100000,
+        "delivery-limit": 5,
+        "message-ttl": 604800000
+      }
+    },
+    {
+      "vhost": "labflow",
+      "name": "dead-letter-queues",
+      "pattern": "\\.dead-letter$",
+      "apply-to": "quorum_queues",
+      "priority": 0,
+      "definition": { "overflow": "reject-publish", "max-length": 100000, "message-ttl": 604800000 }
+    }
+  ]
+}
