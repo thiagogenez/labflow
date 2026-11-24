@@ -1,6 +1,7 @@
 // Command order-api runs checkout: it prices orders from the catalogue,
 // charges them through payment-api and records paid orders with their
-// order.placed event in a transactional outbox.
+// order.placed event in a transactional outbox, which it publishes to the
+// broker.
 package main
 
 import (
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -19,7 +21,9 @@ import (
 	"github.com/thiagogenez/labflow/libs/go/httpserver"
 	"github.com/thiagogenez/labflow/libs/go/idempotency"
 	"github.com/thiagogenez/labflow/libs/go/logging"
+	"github.com/thiagogenez/labflow/libs/go/outbox"
 	"github.com/thiagogenez/labflow/libs/go/postgres"
+	"github.com/thiagogenez/labflow/libs/go/rabbitmq"
 	"github.com/thiagogenez/labflow/libs/go/telemetry"
 	"github.com/thiagogenez/labflow/services/order-api/internal/order"
 	"github.com/thiagogenez/labflow/services/order-api/migrations"
@@ -49,7 +53,7 @@ func run(ctx context.Context, args []string) error {
 	case cmd == "serve":
 		return serve(ctx)
 	case cmd == "migrate":
-		return postgres.MigrateFromEnv(ctx, service, idempotency.Migration, migrations.Migration)
+		return postgres.MigrateFromEnv(ctx, service, migrations.All...)
 	case cmd == "catalogue" && len(args) == 3 && args[1] == "import":
 		return importCatalogue(ctx, args[2])
 	case cmd == "healthcheck":
@@ -65,6 +69,7 @@ func serve(ctx context.Context) error {
 	dsn := env.Required("DATABASE_URL")
 	paymentURL := env.URL("PAYMENT_API_URL")
 	ratesFile := env.Required("FLAT_RATES_FILE")
+	brokerURL := rabbitmq.URLFromEnv(env)
 	tokenKey, keyErr := base64.StdEncoding.DecodeString(env.Required("ORDER_TOKEN_KEY"))
 	if keyErr != nil {
 		keyErr = errors.New("ORDER_TOKEN_KEY must be base64")
@@ -99,6 +104,16 @@ func serve(ctx context.Context) error {
 	store := order.NewStore(pool)
 	go store.RunPendingGauge(ctx, 30*time.Second, log)
 	svc := order.NewService(store, order.NewPayments(paymentURL), rates, log)
+	// The relay runs beside checkout but never gates it: with the broker
+	// down, orders are still taken and their events wait in the outbox.
+	relay := outbox.NewRelay(pool, rabbitmq.NewPublisher(brokerURL, service+" outbox relay"), log)
+	relayCtx, stopRelay := context.WithCancel(ctx)
+	var relays sync.WaitGroup
+	relays.Go(func() { relay.Run(relayCtx) })
+	// Also when the server fails to start; the batch in flight finishes
+	// before the pool closes.
+	defer relays.Wait()
+	defer stopRelay()
 
 	mux := http.NewServeMux()
 	order.Register(mux, svc, tokens, idem, log)

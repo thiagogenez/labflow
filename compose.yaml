@@ -52,6 +52,29 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
 
+  # The topology, users and permissions come from definitions.json (D70). The
+  # passwords repeat the user names: the AMQP port is reachable only inside
+  # the Compose network, and the clusters take credentials from Vault.
+  rabbitmq:
+    <<: *hardening
+    image: rabbitmq:4.4.1-management@sha256:61f90c401a5b5ed2486771973ea92ad66046471eacab9c9149f1a6e091c91677
+    # RabbitMQ keeps its data under its node name, rabbit@<hostname>: without
+    # a fixed hostname, a recreated container starts empty on the same volume.
+    hostname: rabbitmq
+    user: rabbitmq
+    mem_limit: 1g # repeated in labflow.conf
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      - ./compose/rabbitmq/labflow.conf:/etc/rabbitmq/conf.d/90-labflow.conf:ro
+      - ./compose/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+    ports:
+      - "127.0.0.1:15672:15672" # management UI
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
   jaeger:
     image: jaegertracing/jaeger:2.23.0@sha256:3823829974ccfc2485d2e48b165579091f32295022ae80ca49704e2f4834116e
     ports:
@@ -159,6 +182,8 @@ services:
       FLAT_RATES_FILE: /etc/order-api/flat-rates.json
       # Local only, not a secret: the clusters read the key from Vault (D56).
       ORDER_TOKEN_KEY: eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg= # 32 times x
+      BROKER: rabbitmq
+      RABBITMQ_URL: amqp://order-api:order-api@rabbitmq:5672/labflow
     volumes:
       - ./services/order-api/flat-rates.json:/etc/order-api/flat-rates.json:ro
     ports:
@@ -167,6 +192,10 @@ services:
     depends_on:
       order-api-catalogue: { condition: service_completed_successfully }
       payment-api: { condition: service_healthy }
+      # Started, not healthy: checkout works without the broker, and the
+      # outbox relay retries until RabbitMQ answers.
+      rabbitmq: { condition: service_started }
 
 volumes:
   postgres-data:
+  rabbitmq-data:
