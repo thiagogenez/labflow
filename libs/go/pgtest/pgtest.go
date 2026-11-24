@@ -16,6 +16,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
+	"github.com/thiagogenez/labflow/libs/go/dockertest"
 	"github.com/thiagogenez/labflow/libs/go/postgres"
 )
 
@@ -23,6 +24,7 @@ import (
 const Image = "postgres:18.7-trixie@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a"
 
 var (
+	ctr      *tcpostgres.PostgresContainer
 	adminDSN string
 	dbSeq    atomic.Int64
 )
@@ -31,7 +33,8 @@ var (
 // Use it as: func TestMain(m *testing.M) { os.Exit(pgtest.Main(m)) }.
 func Main(m *testing.M) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	ctr, err := tcpostgres.Run(ctx, Image,
+	var err error
+	ctr, err = tcpostgres.Run(ctx, Image,
 		tcpostgres.WithDatabase("pgtest"),
 		tcpostgres.WithUsername("pgtest"),
 		tcpostgres.WithPassword("pgtest"),
@@ -106,4 +109,11 @@ func NewDatabase(t *testing.T, migrations ...postgres.Migration) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 	return pool
+}
+
+// Pause freezes the database until the test ends, as with a server that
+// stops answering.
+func Pause(t *testing.T) {
+	t.Helper()
+	dockertest.Pause(t, ctr.GetContainerID())
 }
