@@ -3,6 +3,7 @@ package payment
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -25,6 +26,9 @@ import (
 	"github.com/thiagogenez/labflow/services/payment-api/migrations"
 )
 
+// pspKey is the secret key the fake provider accepts, new on every run.
+var pspKey = "sk_test_" + rand.Text()
+
 func TestMain(m *testing.M) { os.Exit(pgtest.Main(m)) }
 
 // fakeProvider answers charges with a scripted response and records the
@@ -43,7 +47,7 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.keys = append(f.keys, r.Header.Get(idempotency.Header))
 	}
 	f.mu.Unlock()
-	if r.Header.Get("Authorization") != "Bearer sk_test" {
+	if r.Header.Get("Authorization") != "Bearer "+pspKey {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -107,7 +111,7 @@ func newEnvLogging(t *testing.T, logs io.Writer) env {
 	t.Cleanup(srv.Close)
 	base, _ := url.Parse(srv.URL)
 	log := slog.New(slog.NewJSONHandler(logs, nil))
-	svc := NewService(NewStore(pool), NewProvider(base, "sk_test", 50*time.Millisecond), log)
+	svc := NewService(NewStore(pool), NewProvider(base, pspKey, 50*time.Millisecond), log)
 	mux := http.NewServeMux()
 	Register(mux, svc, idempotency.NewStore(pool, log), log)
 	return env{api: mux, svc: svc, provider: fake, pool: pool}

@@ -3,6 +3,7 @@ package order
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -106,7 +107,9 @@ func newAPI(t *testing.T) *testAPI {
 	srv := httptest.NewServer(pay)
 	t.Cleanup(srv.Close)
 	base, _ := url.Parse(srv.URL)
-	tokens, _ := NewTokens([]byte(strings.Repeat("k", 32)))
+	key := make([]byte, 32)
+	_, _ = rand.Read(key) // never fails
+	tokens, _ := NewTokens(key)
 	log := slog.New(slog.DiscardHandler)
 	mux := http.NewServeMux()
 	Register(mux, NewService(store, NewPayments(base), testRates(t), log), tokens, idempotency.NewStore(pool, log), log)

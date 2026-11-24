@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +28,7 @@ func TestEnv(t *testing.T) {
 		{"duration negative", map[string]string{"D": "-1s"}, func(e *config.Env) any { return e.Duration("D", time.Second) }, time.Second, "D must be a positive duration"},
 		{"url valid", map[string]string{"U": "http://psp:8080"}, func(e *config.Env) any { return e.URL("U").String() }, "http://psp:8080", ""},
 		{"url relative", map[string]string{"U": "psp:8080"}, func(e *config.Env) any { return e.URL("U") == nil }, true, "U must be an absolute http or https URL"},
+		{"url with credentials", map[string]string{"U": "http://user:s3cret@psp:8080"}, func(e *config.Env) any { return e.URL("U") == nil }, true, "U must not carry credentials"},
 		{"check fails", nil, func(e *config.Env) any { e.Check(false, "keys must differ"); return nil }, nil, "keys must differ"},
 	}
 	for _, tt := range tests {
@@ -63,3 +66,57 @@ func TestEnvReportsEveryProblem(t *testing.T) {
 		}
 	}
 }
+
+func TestSecret(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	good := write("good", " s3cret value \n")
+	tests := []struct {
+		name    string
+		value   *string // nil leaves S unset
+		file    string
+		want    string
+		wantErr string
+	}{
+		{name: "from the file, less its newline", file: good, want: " s3cret value "},
+		{name: "a carriage return is the secret's", file: write("crlf", "s3cret\r\n"), want: "s3cret\r"},
+		{name: "value set directly", value: ptr("s3cret value"), file: good, wantErr: "S must not be set; put the secret in a file and set S_FILE"},
+		{name: "value set to nothing", value: ptr(""), file: good, wantErr: "S must not be set"},
+		{name: "no file named", wantErr: "S_FILE is required"},
+		{name: "missing file", file: filepath.Join(dir, "absent"), wantErr: "S_FILE"},
+		{name: "empty file", file: write("empty", "\n"), wantErr: "is empty"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("S", "")
+			if tt.value == nil {
+				_ = os.Unsetenv("S") // t.Setenv restores it afterwards
+			} else {
+				t.Setenv("S", *tt.value)
+			}
+			t.Setenv("S_FILE", tt.file)
+			e := config.FromEnviron()
+			if got := e.Secret("S"); got != tt.want {
+				t.Errorf("Secret = %q, want %q", got, tt.want)
+			}
+			err := e.Err()
+			if tt.wantErr == "" && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Errorf("error %v, want %q", err, tt.wantErr)
+			}
+			if err != nil && strings.Contains(err.Error(), "s3cret") {
+				t.Errorf("error repeats the secret: %v", err)
+			}
+		})
+	}
+}
+
+func ptr(s string) *string { return &s }

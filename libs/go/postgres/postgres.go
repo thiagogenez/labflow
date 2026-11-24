@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -32,6 +34,40 @@ const (
 	// schemaLockID serialises creating the goose schema across migrators.
 	schemaLockID = 7_271_011
 )
+
+// DSNFromEnv reads a connection URL without its password from the variable
+// name and the password from its secret: DATABASE_URL takes its password
+// from the file DATABASE_PASSWORD_FILE names. A URL that carries a password
+// is refused, and no error repeats either value.
+func DSNFromEnv(env *config.Env, name string) string {
+	raw := env.Required(name)
+	password := env.Secret(strings.TrimSuffix(name, "_URL") + "_PASSWORD")
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Host == "" || u.User == nil || u.User.Username() == "" {
+		env.Check(false, name+" must be a postgres:// URL with a host and a user")
+		return ""
+	}
+	// pgx also takes a password from the query string, over the userinfo, and
+	// splits it differently from url.Query, which drops pairs it cannot parse.
+	_, inUser := u.User.Password()
+	query, err := url.ParseQuery(u.RawQuery)
+	credential := inUser || err != nil || u.Fragment != ""
+	for key := range query {
+		switch strings.TrimSpace(key) { // pgx trims keys
+		case "password", "passfile", "sslpassword":
+			credential = true
+		}
+	}
+	if credential {
+		env.Check(false, name+" must not carry a password; its secret file holds it")
+		return ""
+	}
+	u.User = url.UserPassword(u.User.Username(), password)
+	return u.String()
+}
 
 // Connect opens a pool and checks that the database answers.
 func Connect(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
@@ -123,13 +159,14 @@ func createGooseSchema(ctx context.Context, db *sql.DB) error {
 }
 
 // MigrateFromEnv runs a service's `migrate` command: it applies the
-// migrations to MIGRATIONS_DATABASE_URL, the schema owner's connection,
+// migrations to MIGRATIONS_DATABASE_URL, the schema owner's connection with
+// its password from MIGRATIONS_DATABASE_PASSWORD_FILE,
 // within MIGRATION_TIMEOUT. The timeout is long enough for real DDL and short
 // enough that a stuck migration fails the job instead of holding the
 // service's start forever.
 func MigrateFromEnv(ctx context.Context, service string, migrations ...Migration) error {
 	env := config.FromEnviron()
-	dsn := env.Required("MIGRATIONS_DATABASE_URL")
+	dsn := DSNFromEnv(env, "MIGRATIONS_DATABASE_URL")
 	timeout := env.Duration("MIGRATION_TIMEOUT", 10*time.Minute)
 	if err := env.Err(); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)

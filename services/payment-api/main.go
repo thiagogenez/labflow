@@ -58,9 +58,9 @@ func serve(ctx context.Context) error {
 	env := config.FromEnviron()
 	level, levelErr := logging.ParseLevel(env.String("LOG_LEVEL", "info"))
 	httpCfg := httpserver.ConfigFromEnv(env)
-	dsn := env.Required("DATABASE_URL")
+	dsn := postgres.DSNFromEnv(env, "DATABASE_URL")
 	pspURL := env.URL("PSP_BASE_URL")
-	pspKey := env.Required("PSP_SECRET_KEY")
+	pspKey := env.Secret("PSP_SECRET_KEY")
 	pspTimeout := env.Duration("PSP_TIMEOUT", 3*time.Second)
 	resolveInterval := env.Duration("RESOLVE_INTERVAL", 10*time.Second)
 	if err := errors.Join(levelErr, env.Err()); err != nil {

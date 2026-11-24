@@ -1,10 +1,13 @@
 // Package rabbitmqtest runs integration tests against a real RabbitMQ in a
 // throwaway container, loaded with the topology, users and permissions that
-// Docker Compose loads. Import it only from tests.
+// Docker Compose loads, each user with a random password. Import it only
+// from tests.
 package rabbitmqtest
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +22,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/thiagogenez/labflow/libs/go/dockertest"
+	"github.com/thiagogenez/labflow/libs/go/rabbitmq"
 )
 
 // image matches the RabbitMQ image in Docker Compose.
@@ -28,13 +32,15 @@ const image = "rabbitmq:4.4.1-management@sha256:61f90c401a5b5ed2486771973ea92ad6
 const Vhost = "labflow"
 
 var (
-	ctr     *testcontainers.DockerContainer
-	address string
+	ctr       *testcontainers.DockerContainer
+	address   string
+	passwords = map[string]string{}
 )
 
 // Main starts one broker, calls run and removes the broker. Use it as
 // os.Exit(rabbitmqtest.Main(m.Run)), or wrap pgtest.Main to get both.
 func Main(run func() int) int {
+	dockertest.DisableReaper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	var err error
 	ctr, err = start(ctx)
@@ -58,11 +64,16 @@ func Main(run func() int) int {
 func start(ctx context.Context) (*testcontainers.DockerContainer, error) {
 	_, file, _, _ := runtime.Caller(0)
 	dir := filepath.Join(filepath.Dir(file), "..", "..", "..", "compose", "rabbitmq")
+	definitions, err := render(filepath.Join(dir, "definitions.template.json"))
+	if err != nil {
+		return nil, err
+	}
 	return testcontainers.Run(ctx, image,
 		testcontainers.WithExposedPorts("5672/tcp"),
+		dockertest.Isolate("5672/tcp"),
 		testcontainers.WithFiles(
 			testcontainers.ContainerFile{HostFilePath: filepath.Join(dir, "labflow.conf"), ContainerFilePath: "/etc/rabbitmq/conf.d/90-labflow.conf", FileMode: 0o644},
-			testcontainers.ContainerFile{HostFilePath: filepath.Join(dir, "definitions.json"), ContainerFilePath: "/etc/rabbitmq/definitions.json", FileMode: 0o644},
+			testcontainers.ContainerFile{Reader: bytes.NewReader(definitions), ContainerFilePath: "/run/secrets/rabbitmq-definitions.json", FileMode: 0o644},
 		),
 		testcontainers.WithWaitStrategy(wait.ForAll(
 			wait.ForLog("Server startup complete"),
@@ -71,14 +82,18 @@ func start(ctx context.Context) (*testcontainers.DockerContainer, error) {
 	)
 }
 
-// URL returns the AMQP URL for a user from the definitions, whose local
-// password repeats its name.
+// URL returns the AMQP URL, with its password, for a user from the
+// definitions.
 func URL(t *testing.T, user string) string {
 	t.Helper()
 	if address == "" {
 		t.Fatal("rabbitmqtest: call rabbitmqtest.Main from TestMain")
 	}
-	return fmt.Sprintf("amqp://%s:%s@%s/%s", user, user, address, Vhost)
+	password, ok := passwords[user]
+	if !ok {
+		t.Fatalf("rabbitmqtest: no user %q in the definitions", user)
+	}
+	return fmt.Sprintf("amqp://%s:%s@%s/%s", user, password, address, Vhost)
 }
 
 // Admin returns a channel with every permission on the vhost, for setting up
@@ -151,4 +166,21 @@ func Exec(t *testing.T, cmd ...string) string {
 func Pause(t *testing.T) {
 	t.Helper()
 	dockertest.Pause(t, ctr.GetContainerID())
+}
+
+// render gives every user in the definitions template a random password,
+// with the renderer the local setup uses.
+func render(path string) ([]byte, error) {
+	template, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	users, err := rabbitmq.DefinitionUsers(template)
+	if err != nil {
+		return nil, err
+	}
+	for _, user := range users {
+		passwords[user] = rand.Text() + rand.Text()
+	}
+	return rabbitmq.RenderDefinitions(template, passwords)
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -229,7 +230,7 @@ func TestPublishGivesUpOnAHungBroker(t *testing.T) {
 	}
 }
 
-// The policies in definitions.json do what D49, D64 and D70 require.
+// The policies in the definitions template do what D49, D64 and D70 require.
 func TestDefinitionsPolicies(t *testing.T) {
 	out := rabbitmqtest.Exec(t, "rabbitmqctl", "-q", "list_queues", "-p", rabbitmqtest.Vhost, "name", "effective_policy_definition", "--formatter", "json")
 	var queues []struct {
@@ -320,35 +321,43 @@ func TestProducerCannotChangeTheTopologyOrRead(t *testing.T) {
 }
 
 func TestURLFromEnv(t *testing.T) {
-	const url = "amqp://order-api:s3cret@rabbitmq:5672/labflow"
+	secret := filepath.Join(t.TempDir(), "pw")
+	if err := os.WriteFile(secret, []byte("s3cret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const url = "amqp://order-api@rabbitmq:5672/labflow"
 	for _, tc := range []struct {
-		name, broker, url, wantErr string
+		name, broker, url, want, wantErr string
 	}{
-		{name: "valid", broker: "rabbitmq", url: url},
+		{name: "password from the file", broker: "rabbitmq", url: url, want: "amqp://order-api:s3cret@rabbitmq:5672/labflow"},
 		{name: "broker missing", url: url, wantErr: "BROKER"},
 		{name: "another broker", broker: "kafka", url: url, wantErr: `BROKER must be rabbitmq, got "kafka"`},
 		{name: "url missing", broker: "rabbitmq", wantErr: "RABBITMQ_URL"},
-		{name: "not an amqp url", broker: "rabbitmq", url: "http://order-api:s3cret@rabbitmq", wantErr: "RABBITMQ_URL must be"},
-		{name: "port out of range", broker: "rabbitmq", url: "amqp://order-api:s3cret@rabbitmq:70000/labflow", wantErr: "RABBITMQ_URL must be"},
+		{name: "password in the url", broker: "rabbitmq", url: "amqp://order-api:0ldPass@rabbitmq/labflow", wantErr: "RABBITMQ_URL must not carry a password"},
+		{name: "password in the query", broker: "rabbitmq", url: "amqp://order-api@rabbitmq/labflow?password=0ldPass", wantErr: "RABBITMQ_URL must not carry a password"},
+		{name: "no user", broker: "rabbitmq", url: "amqp://rabbitmq/labflow", wantErr: "RABBITMQ_URL must be"},
+		{name: "not an amqp url", broker: "rabbitmq", url: "http://order-api@rabbitmq", wantErr: "RABBITMQ_URL must be"},
+		{name: "port out of range", broker: "rabbitmq", url: "amqp://order-api@rabbitmq:70000/labflow", wantErr: "RABBITMQ_URL must be"},
 		{name: "no host", broker: "rabbitmq", url: "amqp:rabbitmq", wantErr: "RABBITMQ_URL must be"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("BROKER", tc.broker)
 			t.Setenv("RABBITMQ_URL", tc.url)
+			t.Setenv("RABBITMQ_PASSWORD_FILE", secret)
 			env := config.FromEnviron()
 			got := rabbitmq.URLFromEnv(env)
 			err := env.Err()
 			if tc.wantErr == "" {
-				if err != nil || got != url {
-					t.Errorf("URLFromEnv = %q, %v", got, err)
+				if err != nil || got != tc.want {
+					t.Errorf("URLFromEnv = %q, %v; want %q", got, err, tc.want)
 				}
 				return
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("error = %v, want %q", err, tc.wantErr)
 			}
-			if strings.Contains(err.Error(), "s3cret") {
-				t.Errorf("error repeats the password: %v", err)
+			if strings.Contains(err.Error(), "s3cret") || strings.Contains(err.Error(), "0ldPass") {
+				t.Errorf("error repeats a password: %v", err)
 			}
 		})
 	}

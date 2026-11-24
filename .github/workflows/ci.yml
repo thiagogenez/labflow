@@ -37,7 +37,3 @@ jobs:
 
       - name: Run every module's tests with the race detector
         run: make test
-        env:
-          # The runner is ephemeral and pgtest removes its container, so the
-          # Ryuk reaper (pulled by tag, given the Docker socket) is not needed.
-          TESTCONTAINERS_RYUK_DISABLED: "true"

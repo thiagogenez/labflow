@@ -2,6 +2,7 @@ package psp
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -19,9 +20,10 @@ import (
 	"github.com/thiagogenez/labflow/services/psp-simulator/migrations"
 )
 
-const (
+// pk is public by design; sk is a secret, new on every run.
+var (
 	pk = "pk_test_local"
-	sk = "sk_test_local"
+	sk = "sk_test_" + rand.Text()
 )
 
 func TestMain(m *testing.M) { os.Exit(pgtest.Main(m)) }
