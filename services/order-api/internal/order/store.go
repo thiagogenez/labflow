@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	"github.com/thiagogenez/labflow/libs/go/outbox"
 )
 
 var errNotFound = errors.New("order not found")
@@ -200,9 +202,7 @@ func (s *Store) MarkPaid(ctx context.Context, orderID, eventID string, payload [
 			return err
 		}
 		changed = true
-		_, err = tx.Exec(ctx, `INSERT INTO outbox (id, aggregatetype, aggregateid, type, payload)
-			VALUES ($1, $2, $3, $4, $5)`, eventID, outboxTopic, orderID, TypeOrderPlaced, payload)
-		return err
+		return outbox.Write(ctx, tx, outbox.Event{ID: eventID, Topic: outboxTopic, AggregateID: orderID, Type: TypeOrderPlaced, Payload: payload})
 	})
 	return changed, err
 }

@@ -62,6 +62,16 @@ type Migration struct {
 	Name string
 }
 
+// NewMigration returns the goose migrations embedded under dir in fsys, with
+// the version table goose.<name>.
+func NewMigration(fsys fs.FS, dir, name string) Migration {
+	sub, err := fs.Sub(fsys, dir)
+	if err != nil {
+		panic(err) // the embedded directory is fixed at build time
+	}
+	return Migration{FS: sub, Name: name}
+}
+
 // Migrate applies the migrations in order. A session advisory lock lets
 // several replicas start at once without racing.
 func Migrate(ctx context.Context, dsn string, log *slog.Logger, migrations ...Migration) error {

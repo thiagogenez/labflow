@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -49,7 +48,7 @@ const (
 var migrationFS embed.FS
 
 // Migration creates the key table; services apply it next to their own.
-var Migration = postgres.Migration{FS: mustSub(migrationFS, "migrations"), Name: "idempotency_version"}
+var Migration = postgres.NewMigration(migrationFS, "migrations", "idempotency_version")
 
 // Store keeps keys and responses in PostgreSQL.
 type Store struct {
@@ -348,12 +347,4 @@ func (r *recorder) WriteHeader(code int) {
 func (r *recorder) Write(b []byte) (int, error) {
 	r.wrote = true
 	return r.body.Write(b)
-}
-
-func mustSub(f fs.FS, dir string) fs.FS {
-	sub, err := fs.Sub(f, dir)
-	if err != nil {
-		panic(err) // the embedded directory is fixed at build time
-	}
-	return sub
 }

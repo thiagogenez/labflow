@@ -17,9 +17,9 @@ Implementation starts on 2026-11-20. This table is the source of truth for what 
 | Contribution workflow (pull request template, ticket references, pull request check) | Running in CI |
 | Event contracts (CloudEvents JSON Schema) | `order.placed` validated by the hooks and by order-api's producer tests; the others land with their producers |
 | Payments: `psp-simulator` and `payment-api` in Docker Compose | Compose tested locally; Go tests in CI |
-| Checkout: `order-api` (catalogue, quotes, orders, outbox) in Docker Compose | Compose tested locally; Go tests in CI; the outbox relay lands with RabbitMQ, and the payment reconciler with `shipping-api` |
+| Checkout: `order-api` (catalogue, quotes, orders, outbox) in Docker Compose | Compose tested locally; Go tests in CI; the payment reconciler lands with `shipping-api` |
 | Other services (stock, shipping, email, analytics, storefront) | Planned |
-| Message broker adapters (RabbitMQ, Kafka, SNS + SQS) | Planned |
+| Message broker adapters (RabbitMQ, Kafka, SNS + SQS) | RabbitMQ: `order-api` publishes `order.placed` through its outbox, in Docker Compose; Kafka and SNS + SQS planned |
 | Signed multi-arch images on GHCR | Planned |
 
 ## Services
@@ -96,6 +96,7 @@ docker compose up --build --wait
 | <http://localhost:8082> | `order-api`, the shop's public API |
 | <http://localhost:8081> | `payment-api` |
 | <http://localhost:8090> | `psp-simulator`, the simulated payment provider |
+| <http://localhost:15672> | RabbitMQ management UI; sign in as `admin` / `admin`, a local-only account |
 | <http://localhost:16686> | Jaeger, the trace viewer |
 
 Order with a test card: list the products, ask for a quote, then pay exactly the total the quote showed.
@@ -122,7 +123,7 @@ The test cards are fictitious and work only against `psp-simulator`, which valid
 
 | Outcome | psp-simulator | order-api answers |
 | --- | --- | --- |
-| `approve` | charges at once | 201, paid; `order.placed` is written to the outbox |
+| `approve` | charges at once | 201, paid; `order.placed` is published to RabbitMQ |
 | `decline` | refuses: insufficient funds | 402, with the order |
 | `slow` | charges after 10 seconds | 202, pending |
 | `pending` | pending, approved after 30 seconds | 202, pending |
@@ -130,7 +131,11 @@ The test cards are fictitious and work only against `psp-simulator`, which valid
 
 A 202 order is not yet reconciled automatically: it stays `pending_payment`, without `order.placed`, even after payment-api settles its charge, until the client retries the same checkout after its stored answer expires, or the payment reconciler arrives. `orders_pending_payment` on `/metrics` counts such orders.
 
-`make test` runs every Go module's tests against real PostgreSQL in throwaway containers.
+Paid orders' `order.placed` events wait in the `email-worker` queue until email-worker arrives: in the management UI, open Queues, then `email-worker`, then Get messages. RabbitMQ's users, queues, bindings and permissions come from [`compose/rabbitmq/definitions.json`](compose/rabbitmq/definitions.json); `order-api` may only publish `labflow.order.*` events, and cannot read, create, bind or delete anything.
+
+Checkout does not depend on the broker. While RabbitMQ is down, orders are still taken and their events wait in order-api's outbox table; `outbox_unpublished_events` and `outbox_oldest_unpublished_age_seconds` on order-api's `/metrics` show the backlog, which drains once RabbitMQ is back. Events carry the customer's email and first name, so the relay selects for publishing only events at most 6 days and 23 hours old, and from that age an event, published or not, is due for deletion; deleted unpublished events are counted in `outbox_events_expired_total`. Each published event carries what is left of its 7 days as its message expiration. RabbitMQ expires a message only once it reaches the front of its queue, so a stopped consumer's queue can hold one up to the queue's own 7 days; it then spends up to 7 more in its dead-letter queue, or stays where it is while that queue cannot take it. `outbox_oldest_event_age_seconds` gives early warning: above 6 days, 23 hours and 30 minutes, old rows are not being deleted in time.
+
+`make test` runs every Go module's tests against real PostgreSQL and RabbitMQ in throwaway containers.
 
 ## Production Gaps
 

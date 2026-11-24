@@ -97,7 +97,7 @@ type testAPI struct {
 
 func newAPI(t *testing.T) *testAPI {
 	t.Helper()
-	pool := pgtest.NewDatabase(t, idempotency.Migration, migrations.Migration)
+	pool := pgtest.NewDatabase(t, migrations.All...)
 	store := NewStore(pool)
 	if _, err := Import(t.Context(), store, "../../catalogue.json"); err != nil {
 		t.Fatal(err)
