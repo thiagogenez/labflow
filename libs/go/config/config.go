@@ -41,6 +41,33 @@ func (e *Env) Required(name string) string {
 	return v
 }
 
+// Secret returns the contents of the file that NAME_FILE names, less one
+// trailing newline, and records an error when NAME_FILE is unset, the file is
+// unreadable or empty, or NAME itself is set, even to nothing: a secret in a
+// variable's value is refused, not used. No error repeats the secret.
+func (e *Env) Secret(name string) string {
+	if _, set := os.LookupEnv(name); set {
+		e.errs = append(e.errs, fmt.Errorf("%s must not be set; put the secret in a file and set %s_FILE", name, name))
+		return ""
+	}
+	path := e.Required(name + "_FILE")
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		e.errs = append(e.errs, fmt.Errorf("%s_FILE: %w", name, err))
+		return ""
+	}
+	// Only the newline an editor may add is dropped, as psql does: every other
+	// byte belongs to the secret, for every reader of the file.
+	secret := strings.TrimSuffix(string(data), "\n")
+	if secret == "" {
+		e.errs = append(e.errs, fmt.Errorf("%s_FILE %s is empty", name, path))
+	}
+	return secret
+}
+
 // Duration parses a positive Go duration such as "3s", or returns def when unset.
 func (e *Env) Duration(name string, def time.Duration) time.Duration {
 	v, ok := value(name)
@@ -63,7 +90,12 @@ func (e *Env) URL(name string) *url.URL {
 	}
 	u, err := url.Parse(v)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		e.errs = append(e.errs, fmt.Errorf("%s must be an absolute http or https URL, got %q", name, v))
+		e.errs = append(e.errs, fmt.Errorf("%s must be an absolute http or https URL", name))
+		return nil
+	}
+	if u.User != nil {
+		// A credential belongs in a secret file, and an error must not repeat it.
+		e.errs = append(e.errs, fmt.Errorf("%s must not carry credentials", name))
 		return nil
 	}
 	return u

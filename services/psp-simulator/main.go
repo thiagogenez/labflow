@@ -70,10 +70,10 @@ func serve(ctx context.Context) error {
 	level, levelErr := logging.ParseLevel(env.String("LOG_LEVEL", "info"))
 	httpCfg := httpserver.ConfigFromEnv(env)
 	httpCfg.Public = true // browsers call the tokens endpoint directly
-	dsn := env.Required("DATABASE_URL")
+	dsn := postgres.DSNFromEnv(env, "DATABASE_URL")
 	cfg := psp.Config{
 		PublishableKey: env.Required("PUBLISHABLE_KEY"),
-		SecretKey:      env.Required("SECRET_KEY"),
+		SecretKey:      env.Secret("SECRET_KEY"),
 		SlowDelay:      env.Duration("SLOW_DELAY", 10*time.Second),
 		PendingDelay:   env.Duration("PENDING_DELAY", 30*time.Second),
 	}

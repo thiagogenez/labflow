@@ -41,34 +41,48 @@ var (
 
 // URLFromEnv reads the broker settings shared by every producer: BROKER
 // selects the adapter, and RabbitMQ is the only one until the Kafka adapter
-// arrives; RABBITMQ_URL locates the broker. The URL holds a password, so no
-// error message repeats it.
+// arrives; RABBITMQ_URL locates the broker and names the user, whose password
+// comes from the file RABBITMQ_PASSWORD_FILE names. A URL that carries a
+// password is refused, and no error repeats either value.
 func URLFromEnv(env *config.Env) string {
 	broker := env.Required("BROKER")
 	env.Check(broker == "" || broker == "rabbitmq", fmt.Sprintf("BROKER must be rabbitmq, got %q", broker))
 	raw := env.Required("RABBITMQ_URL")
-	if raw != "" {
-		env.Check(validURL(raw), "RABBITMQ_URL must be an amqp:// or amqps:// URL with a host and a valid port")
+	password := env.Secret("RABBITMQ_PASSWORD")
+	if raw == "" {
+		return ""
 	}
-	return raw
+	u := parseURL(raw)
+	if u == nil {
+		env.Check(false, "RABBITMQ_URL must be an amqp:// or amqps:// URL with a host, a user and a valid port")
+		return ""
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	if _, set := u.User.Password(); set || err != nil || query.Has("password") {
+		env.Check(false, "RABBITMQ_URL must not carry a password; its secret file holds it")
+		return ""
+	}
+	u.User = url.UserPassword(u.User.Username(), password)
+	return u.String()
 }
 
-// validURL adds to amqp.ParseURI, which accepts a port above 65535 and
-// turns a URL without a host into localhost.
-func validURL(raw string) bool {
+// parseURL returns the URL, or nil when it is not a valid broker URL. It adds
+// to amqp.ParseURI, which accepts a port above 65535 and turns a URL without
+// a host into localhost.
+func parseURL(raw string) *url.URL {
 	if _, err := amqp.ParseURI(raw); err != nil {
-		return false
+		return nil
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Hostname() == "" {
-		return false
+	if err != nil || u.Hostname() == "" || u.User == nil || u.User.Username() == "" {
+		return nil
 	}
 	if p := u.Port(); p != "" {
 		if n, err := strconv.ParseUint(p, 10, 16); err != nil || n == 0 {
-			return false
+			return nil
 		}
 	}
-	return true
+	return u
 }
 
 // Message is one event to publish.

@@ -17,7 +17,7 @@ LabFlow is the order-processing application that runs on [LabFlow Platform](http
 
 ## Service Conventions
 
-- Configuration comes from environment variables, validated at startup; invalid configuration fails fast.
+- Configuration comes from environment variables, validated at startup; invalid configuration fails fast. A secret never travels in a variable's value: the service reads it from the file a `NAME_FILE` variable names (`config.Env.Secret`) and refuses `NAME` itself; connection URLs carry no password. Tests generate random credentials and publish their ports on 127.0.0.1 only.
 - HTTP services expose `/healthz` (liveness), `/readyz` (dependencies ready) and `/metrics` (Prometheus). Workers expose the same endpoints on an admin port.
 - Every outbound call has an explicit timeout. Shut down gracefully on SIGTERM within the termination grace period.
 - Logs are structured JSON on stdout with the W3C trace ID as correlation ID. Every service installs the OpenTelemetry SDK and configures its exporter only through the standard `OTEL_*` environment variables. Public entry points start a new trace and keep an inbound `traceparent` only as a link; consumers process each event as a child of its `traceparent`, so one trace ID follows each request, such as a checkout or a refund, through every service it reaches; `subject` ties together the traces of one order. Order, user and event IDs never become metric labels.

@@ -66,13 +66,13 @@ func serve(ctx context.Context) error {
 	env := config.FromEnviron()
 	level, levelErr := logging.ParseLevel(env.String("LOG_LEVEL", "info"))
 	httpCfg := httpserver.ConfigFromEnv(env)
-	dsn := env.Required("DATABASE_URL")
+	dsn := postgres.DSNFromEnv(env, "DATABASE_URL")
 	paymentURL := env.URL("PAYMENT_API_URL")
 	ratesFile := env.Required("FLAT_RATES_FILE")
 	brokerURL := rabbitmq.URLFromEnv(env)
-	tokenKey, keyErr := base64.StdEncoding.DecodeString(env.Required("ORDER_TOKEN_KEY"))
+	tokenKey, keyErr := base64.StdEncoding.DecodeString(env.Secret("ORDER_TOKEN_KEY"))
 	if keyErr != nil {
-		keyErr = errors.New("ORDER_TOKEN_KEY must be base64")
+		keyErr = errors.New("ORDER_TOKEN_KEY_FILE must hold base64")
 	}
 	if err := errors.Join(levelErr, keyErr, env.Err()); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
@@ -125,7 +125,7 @@ func serve(ctx context.Context) error {
 // role: it changes data, not the schema.
 func importCatalogue(ctx context.Context, path string) error {
 	env := config.FromEnviron()
-	dsn := env.Required("DATABASE_URL")
+	dsn := postgres.DSNFromEnv(env, "DATABASE_URL")
 	if err := env.Err(); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}

@@ -16,19 +16,40 @@ x-hardening: &hardening
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
 
+# Changes whenever a secret does (see the Makefile), so Compose recreates the
+# services that read one.
+x-secrets-generation: &secrets-generation
+  labflow.secrets-generation: ${LABFLOW_SECRETS_GENERATION:-}
+
 x-healthcheck: &healthcheck
   test: ["CMD", "/service", "healthcheck"]
   interval: 5s
   timeout: 3s
   retries: 12
 
+# Generated in .secrets/ by `make up` (D40).
+secrets:
+  postgres-superuser: { file: ./.secrets/postgres-superuser }
+  psp-owner: { file: ./.secrets/psp-owner }
+  psp-app: { file: ./.secrets/psp-app }
+  payment-owner: { file: ./.secrets/payment-owner }
+  payment-app: { file: ./.secrets/payment-app }
+  orders-owner: { file: ./.secrets/orders-owner }
+  orders-app: { file: ./.secrets/orders-app }
+  psp-secret-key: { file: ./.secrets/psp-secret-key }
+  order-token-key: { file: ./.secrets/order-token-key }
+  rabbitmq-order-api: { file: ./.secrets/rabbitmq-order-api }
+  rabbitmq-definitions.json: { file: ./.secrets/rabbitmq-definitions.json }
+
 services:
   postgres:
     image: postgres:18.7-trixie@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
     environment:
-      POSTGRES_PASSWORD: postgres # local only; the port is not published
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-superuser
+    secrets: [postgres-superuser]
     volumes:
       - postgres-data:/var/lib/postgresql
+      - postgres-socket:/var/run/postgresql
     healthcheck:
       # TCP, not the socket: during first-boot init the socket answers before TCP does.
       test: ["CMD", "pg_isready", "--host", "127.0.0.1", "--username", "postgres"]
@@ -43,18 +64,18 @@ services:
     image: postgres:18.7-trixie@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
     user: postgres
     entrypoint: ["bash", "/provision.sh"]
-    environment:
-      PGHOST: postgres
-      PGUSER: postgres
-      PGPASSWORD: postgres # local only; the port is not published
+    labels: *secrets-generation
+    secrets: [psp-owner, psp-app, payment-owner, payment-app, orders-owner, orders-app]
     volumes:
       - ./compose/postgres/provision.sh:/provision.sh:ro
+      # The server's Unix socket, which it trusts: whatever mounts it is the
+      # superuser. Only this job and the server may.
+      - postgres-socket:/var/run/postgresql
     depends_on:
       postgres: { condition: service_healthy }
 
-  # The topology, users and permissions come from definitions.json (D70). The
-  # passwords repeat the user names: the AMQP port is reachable only inside
-  # the Compose network, and the clusters take credentials from Vault.
+  # The topology, users and permissions come from definitions.template.json
+  # with the users' passwords filled in (D70).
   rabbitmq:
     <<: *hardening
     image: rabbitmq:4.4.1-management@sha256:61f90c401a5b5ed2486771973ea92ad66046471eacab9c9149f1a6e091c91677
@@ -66,7 +87,8 @@ services:
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
       - ./compose/rabbitmq/labflow.conf:/etc/rabbitmq/conf.d/90-labflow.conf:ro
-      - ./compose/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+    labels: *secrets-generation
+    secrets: [rabbitmq-definitions.json]
     ports:
       - "127.0.0.1:15672:15672" # management UI
     healthcheck:
@@ -88,7 +110,10 @@ services:
       args: { SERVICE: psp-simulator }
     command: ["migrate"]
     environment:
-      MIGRATIONS_DATABASE_URL: postgres://psp_owner:psp_owner@postgres:5432/psp?sslmode=disable
+      MIGRATIONS_DATABASE_URL: postgres://psp_owner@postgres:5432/psp?sslmode=disable
+      MIGRATIONS_DATABASE_PASSWORD_FILE: /run/secrets/psp-owner
+    labels: *secrets-generation
+    secrets: [psp-owner]
     depends_on:
       postgres-provision: { condition: service_completed_successfully }
 
@@ -101,9 +126,12 @@ services:
       args: { SERVICE: psp-simulator }
     environment:
       <<: *telemetry
-      DATABASE_URL: postgres://psp_app:psp_app@postgres:5432/psp?sslmode=disable
-      PUBLISHABLE_KEY: pk_test_local
-      SECRET_KEY: sk_test_local
+      DATABASE_URL: postgres://psp_app@postgres:5432/psp?sslmode=disable
+      DATABASE_PASSWORD_FILE: /run/secrets/psp-app
+      PUBLISHABLE_KEY: pk_test_local # public by design, like a card form's key
+      SECRET_KEY_FILE: /run/secrets/psp-secret-key
+    labels: *secrets-generation
+    secrets: [psp-app, psp-secret-key]
     ports:
       - "127.0.0.1:8090:8080"
     healthcheck: *healthcheck
@@ -118,7 +146,10 @@ services:
       args: { SERVICE: payment-api }
     command: ["migrate"]
     environment:
-      MIGRATIONS_DATABASE_URL: postgres://payment_owner:payment_owner@postgres:5432/payment?sslmode=disable
+      MIGRATIONS_DATABASE_URL: postgres://payment_owner@postgres:5432/payment?sslmode=disable
+      MIGRATIONS_DATABASE_PASSWORD_FILE: /run/secrets/payment-owner
+    labels: *secrets-generation
+    secrets: [payment-owner]
     depends_on:
       postgres-provision: { condition: service_completed_successfully }
 
@@ -131,9 +162,12 @@ services:
       args: { SERVICE: payment-api }
     environment:
       <<: *telemetry
-      DATABASE_URL: postgres://payment_app:payment_app@postgres:5432/payment?sslmode=disable
+      DATABASE_URL: postgres://payment_app@postgres:5432/payment?sslmode=disable
+      DATABASE_PASSWORD_FILE: /run/secrets/payment-app
       PSP_BASE_URL: http://psp-simulator:8080
-      PSP_SECRET_KEY: sk_test_local
+      PSP_SECRET_KEY_FILE: /run/secrets/psp-secret-key
+    labels: *secrets-generation
+    secrets: [payment-app, psp-secret-key]
     ports:
       - "127.0.0.1:8081:8080"
     healthcheck: *healthcheck
@@ -149,7 +183,10 @@ services:
       args: { SERVICE: order-api }
     command: ["migrate"]
     environment:
-      MIGRATIONS_DATABASE_URL: postgres://orders_owner:orders_owner@postgres:5432/orders?sslmode=disable
+      MIGRATIONS_DATABASE_URL: postgres://orders_owner@postgres:5432/orders?sslmode=disable
+      MIGRATIONS_DATABASE_PASSWORD_FILE: /run/secrets/orders-owner
+    labels: *secrets-generation
+    secrets: [orders-owner]
     depends_on:
       postgres-provision: { condition: service_completed_successfully }
 
@@ -162,7 +199,10 @@ services:
       args: { SERVICE: order-api }
     command: ["catalogue", "import", "/etc/order-api/catalogue.json"]
     environment:
-      DATABASE_URL: postgres://orders_app:orders_app@postgres:5432/orders?sslmode=disable
+      DATABASE_URL: postgres://orders_app@postgres:5432/orders?sslmode=disable
+      DATABASE_PASSWORD_FILE: /run/secrets/orders-app
+    labels: *secrets-generation
+    secrets: [orders-app]
     volumes:
       - ./services/order-api/catalogue.json:/etc/order-api/catalogue.json:ro
     depends_on:
@@ -177,13 +217,16 @@ services:
       args: { SERVICE: order-api }
     environment:
       <<: *telemetry
-      DATABASE_URL: postgres://orders_app:orders_app@postgres:5432/orders?sslmode=disable
+      DATABASE_URL: postgres://orders_app@postgres:5432/orders?sslmode=disable
+      DATABASE_PASSWORD_FILE: /run/secrets/orders-app
       PAYMENT_API_URL: http://payment-api:8080
       FLAT_RATES_FILE: /etc/order-api/flat-rates.json
-      # Local only, not a secret: the clusters read the key from Vault (D56).
-      ORDER_TOKEN_KEY: eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg= # 32 times x
+      ORDER_TOKEN_KEY_FILE: /run/secrets/order-token-key
       BROKER: rabbitmq
-      RABBITMQ_URL: amqp://order-api:order-api@rabbitmq:5672/labflow
+      RABBITMQ_URL: amqp://order-api@rabbitmq:5672/labflow
+      RABBITMQ_PASSWORD_FILE: /run/secrets/rabbitmq-order-api
+    labels: *secrets-generation
+    secrets: [orders-app, order-token-key, rabbitmq-order-api]
     volumes:
       - ./services/order-api/flat-rates.json:/etc/order-api/flat-rates.json:ro
     ports:
@@ -198,4 +241,5 @@ services:
 
 volumes:
   postgres-data:
+  postgres-socket:
   rabbitmq-data:

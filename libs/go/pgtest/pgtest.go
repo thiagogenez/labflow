@@ -4,10 +4,12 @@ package pgtest
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -32,13 +34,23 @@ var (
 // Main starts one container for a package's tests, runs them and removes it.
 // Use it as: func TestMain(m *testing.M) { os.Exit(pgtest.Main(m)) }.
 func Main(m *testing.M) int {
+	dockertest.DisableReaper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	password := rand.Text()
 	var err error
 	ctr, err = tcpostgres.Run(ctx, Image,
 		tcpostgres.WithDatabase("pgtest"),
 		tcpostgres.WithUsername("pgtest"),
-		tcpostgres.WithPassword("pgtest"),
 		tcpostgres.BasicWaitStrategies(),
+		dockertest.Isolate("5432/tcp"),
+		// The password reaches the server as a file, never in the container's
+		// environment, as in Docker Compose.
+		testcontainers.WithFiles(testcontainers.ContainerFile{Reader: strings.NewReader(password), ContainerFilePath: "/run/secrets/postgres", FileMode: 0o644}),
+		testcontainers.CustomizeRequestOption(func(req *testcontainers.GenericContainerRequest) error {
+			delete(req.Env, "POSTGRES_PASSWORD")
+			req.Env["POSTGRES_PASSWORD_FILE"] = "/run/secrets/postgres"
+			return nil
+		}),
 	)
 	// Run may return a container together with an error; remove it either way.
 	defer func() {
@@ -47,7 +59,10 @@ func Main(m *testing.M) int {
 		}
 	}()
 	if err == nil {
-		adminDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
+		var endpoint string
+		endpoint, err = ctr.PortEndpoint(ctx, "5432/tcp", "")
+		adminDSN = (&url.URL{Scheme: "postgres", User: url.UserPassword("pgtest", password), Host: endpoint,
+			Path: "/pgtest", RawQuery: "sslmode=disable"}).String()
 	}
 	cancel()
 	if err != nil {

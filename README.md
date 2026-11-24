@@ -85,18 +85,20 @@ Events are [CloudEvents](https://cloudevents.io/) whose JSON Schema contracts li
 
 ## Run Locally
 
-Needs Docker. Run `make setup` once, then start everything:
+Needs Docker and Go. Run `make setup` once, then start everything:
 
 ```sh
-docker compose up --build --wait
+make up
 ```
+
+`make up` first generates the stack's passwords and keys in `.secrets/`, which Git ignores: a random value per file, which services read as files, never from environment values. `make rotate-secrets` replaces them all and restarts the stack with them; rotating `order-token-key` invalidates every order link already sent.
 
 | Address | Service |
 | --- | --- |
 | <http://localhost:8082> | `order-api`, the shop's public API |
 | <http://localhost:8081> | `payment-api` |
 | <http://localhost:8090> | `psp-simulator`, the simulated payment provider |
-| <http://localhost:15672> | RabbitMQ management UI; sign in as `admin` / `admin`, a local-only account |
+| <http://localhost:15672> | RabbitMQ management UI; sign in as `admin` with the password in `.secrets/rabbitmq-admin` |
 | <http://localhost:16686> | Jaeger, the trace viewer |
 
 Order with a test card: list the products, ask for a quote, then pay exactly the total the quote showed.
@@ -131,7 +133,7 @@ The test cards are fictitious and work only against `psp-simulator`, which valid
 
 A 202 order is not yet reconciled automatically: it stays `pending_payment`, without `order.placed`, even after payment-api settles its charge, until the client retries the same checkout after its stored answer expires, or the payment reconciler arrives. `orders_pending_payment` on `/metrics` counts such orders.
 
-Paid orders' `order.placed` events wait in the `email-worker` queue until email-worker arrives: in the management UI, open Queues, then `email-worker`, then Get messages. RabbitMQ's users, queues, bindings and permissions come from [`compose/rabbitmq/definitions.json`](compose/rabbitmq/definitions.json); `order-api` may only publish `labflow.order.*` events, and cannot read, create, bind or delete anything.
+Paid orders' `order.placed` events wait in the `email-worker` queue until email-worker arrives: in the management UI, open Queues, then `email-worker`, then Get messages. RabbitMQ's users, queues, bindings and permissions come from [`compose/rabbitmq/definitions.template.json`](compose/rabbitmq/definitions.template.json); `order-api` may only publish `labflow.order.*` events, and cannot read, create, bind or delete anything.
 
 Checkout does not depend on the broker. While RabbitMQ is down, orders are still taken and their events wait in order-api's outbox table; `outbox_unpublished_events` and `outbox_oldest_unpublished_age_seconds` on order-api's `/metrics` show the backlog, which drains once RabbitMQ is back. Events carry the customer's email and first name, so the relay selects for publishing only events at most 6 days and 23 hours old, and from that age an event, published or not, is due for deletion; deleted unpublished events are counted in `outbox_events_expired_total`. Each published event carries what is left of its 7 days as its message expiration. RabbitMQ expires a message only once it reaches the front of its queue, so a stopped consumer's queue can hold one up to the queue's own 7 days; it then spends up to 7 more in its dead-letter queue, or stays where it is while that queue cannot take it. `outbox_oldest_event_age_seconds` gives early warning: above 6 days, 23 hours and 30 minutes, old rows are not being deleted in time.
 
