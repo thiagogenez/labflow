@@ -18,7 +18,8 @@ Implementation starts on 2026-11-20. This table is the source of truth for what 
 | Event contracts (CloudEvents JSON Schema) | `order.placed` validated by the hooks and by order-api's producer tests; the others land with their producers |
 | Payments: `psp-simulator` and `payment-api` in Docker Compose | Compose tested locally; Go tests in CI |
 | Checkout: `order-api` (catalogue, quotes, orders, outbox) in Docker Compose | Compose tested locally; Go tests in CI; the payment reconciler lands with `shipping-api` |
-| Other services (stock, shipping, email, analytics, storefront) | Planned |
+| Email: `email-worker` sends order confirmations through Mailpit in Docker Compose | Compose tested locally; Python tests in CI |
+| Other services (stock, shipping, analytics, storefront) | Planned |
 | Message broker adapters (RabbitMQ, Kafka, SNS + SQS) | RabbitMQ: `order-api` publishes `order.placed` through its outbox, in Docker Compose; Kafka and SNS + SQS planned |
 | Signed multi-arch images on GHCR | Planned |
 
@@ -99,6 +100,7 @@ make up
 | <http://localhost:8081> | `payment-api` |
 | <http://localhost:8090> | `psp-simulator`, the simulated payment provider |
 | <http://localhost:15672> | RabbitMQ management UI; sign in as `admin` with the password in `.secrets/rabbitmq-admin` |
+| <http://localhost:8025> | Mailpit, the simulated mail server; sign in as `admin` with the password in `.secrets/mailpit-ui` |
 | <http://localhost:16686> | Jaeger, the trace viewer |
 
 Order with a test card: list the products, ask for a quote, then pay exactly the total the quote showed.
@@ -133,11 +135,13 @@ The test cards are fictitious and work only against `psp-simulator`, which valid
 
 A 202 order is not yet reconciled automatically: it stays `pending_payment`, without `order.placed`, even after payment-api settles its charge, until the client retries the same checkout after its stored answer expires, or the payment reconciler arrives. `orders_pending_payment` on `/metrics` counts such orders.
 
-Paid orders' `order.placed` events wait in the `email-worker` queue until email-worker arrives: in the management UI, open Queues, then `email-worker`, then Get messages. RabbitMQ's users, queues, bindings and permissions come from [`compose/rabbitmq/definitions.template.json`](compose/rabbitmq/definitions.template.json); `order-api` may only publish `labflow.order.*` events, and cannot read, create, bind or delete anything.
+A paid order's `order.placed` event reaches email-worker, which sends its confirmation once, through Mailpit, with a link to the order page that carries the access token; the storefront that serves the page arrives in a later change. Open Mailpit to read it. RabbitMQ's users, queues, bindings and permissions come from [`compose/rabbitmq/definitions.template.json`](compose/rabbitmq/definitions.template.json); `order-api` may only publish `labflow.order.*` events, `email-worker` may only read its own queue, and neither can create, bind or delete anything.
+
+While Mailpit or email-worker's database is down, email-worker keeps the message it holds, retries it with backoff up to 30 seconds and reports not ready on its `/readyz`, without using up any of the queue's 5 delivery attempts; it sends once they are back. An email the mail server refuses for good (a 5xx reply, such as a mailbox that does not exist) is recorded and not retried, and later emails for that order are skipped; `email_worker_emails_total{outcome="refused"}` counts them. Mailpit's Chaos settings (in its interface, or `PUT /api/v1/chaos`) make it refuse logins, senders or recipients with a chosen code, to watch either path. A 5xx code refuses real emails for good and marks their contacts undeliverable, so an outage drill uses a 4xx code, and Chaos is reset afterwards (`PUT /api/v1/chaos` with `{}`): it lasts until Mailpit restarts. `rabbitmq_consumer_holding` on email-worker's `/metrics` is 1 while it holds a message through an outage. A message email-worker cannot parse goes to `email-worker.dead-letter` at once.
 
 Checkout does not depend on the broker. While RabbitMQ is down, orders are still taken and their events wait in order-api's outbox table; `outbox_unpublished_events` and `outbox_oldest_unpublished_age_seconds` on order-api's `/metrics` show the backlog, which drains once RabbitMQ is back. Events carry the customer's email and first name, so the relay selects for publishing only events at most 6 days and 23 hours old, and from that age an event, published or not, is due for deletion; deleted unpublished events are counted in `outbox_events_expired_total`. Each published event carries what is left of its 7 days as its message expiration. RabbitMQ expires a message only once it reaches the front of its queue, so a stopped consumer's queue can hold one up to the queue's own 7 days; it then spends up to 7 more in its dead-letter queue, or stays where it is while that queue cannot take it. `outbox_oldest_event_age_seconds` gives early warning: above 6 days, 23 hours and 30 minutes, old rows are not being deleted in time.
 
-`make test` runs every Go module's tests against real PostgreSQL and RabbitMQ in throwaway containers.
+`make test` runs every Go module's and every Python package's tests against real PostgreSQL, RabbitMQ and Mailpit in throwaway containers.
 
 ## Production Gaps
 
@@ -148,6 +152,7 @@ LabFlow is designed to production standards; only its data and its external syst
 - Fulfilment (picking, shipping, tracking) and returns logistics. Refunds assume the goods come back resellable.
 - An authenticated back office for the catalogue, prices and stock.
 - Customer accounts, 3-D Secure and chargebacks.
+- Bounce notifications that a mail provider sends after accepting an email; email-worker handles only refusals during the send.
 
 ## License
 

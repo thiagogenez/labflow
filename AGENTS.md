@@ -34,6 +34,9 @@ LabFlow is the order-processing application that runs on [LabFlow Platform](http
 - Ruff with its upstream default rules is the linter; Black with its default stable style (88 columns) is the only formatter. Do not also run Ruff formatting or add rule overrides without an agreed reason.
 - Pylint default diagnostics run on every versioned Python file, including scripts. The editor, the hook and CI use the same configuration.
 - Install each Python service package in editable mode. Never inject `sys.path` or suppress E0401 to hide an import problem.
+- Each package (`libs/python`, `services/<name>`) has a `pyproject.toml` built by hatchling, with an empty `[tool.ruff]` table so Ruff groups imports alike from any directory. A service's hash-pinned `requirements.txt` comes from `make lock`; `make setup` installs every package and pin into `.venv`. Pylint runs from each package's directory (`scripts/lint_python_packages.sh`).
+- A Python service runs as `service` (`/service` in its image, as in the Go images) and ships its goose SQL files in `migrations/<set>/`, applied from its `<service>-migrations` image (`services/migrations.Dockerfile`), never from its own.
+- Integration tests run against real PostgreSQL, RabbitMQ and Mailpit through `labflow.containers`, with Docker Compose's images and settings, random passwords and ports on 127.0.0.1 only.
 - Tests are `tests/test_*.py` with pytest: plain `assert`, `pytest.raises` for failures, `parametrize` for input cases, fixtures for shared setup. Preserve existing cases when refactoring.
 - `snake_case` modules, functions and script filenames; `PascalCase` classes.
 
