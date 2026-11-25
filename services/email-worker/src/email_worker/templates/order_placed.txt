@@ -1,0 +1,14 @@
+Hello {{ first_name }},
+
+thank you for your order. We have received your payment and will let you know when it ships.
+
+{% for line in lines -%}
+{{ line.quantity }} x {{ line.name }}  {{ line.gross_amount | euros }}
+{% endfor -%}
+Shipping  {{ shipping | euros }}
+Total  {{ total | euros }} (VAT included)
+
+See your order at any time:
+{{ link }}
+
+LabFlow

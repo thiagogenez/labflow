@@ -13,7 +13,7 @@
 set -euo pipefail
 
 secrets=/run/secrets
-for db in psp payment orders; do
+for db in psp payment orders email; do
   for role in owner app; do
     # psql would read an empty or blank file as an empty password and clear
     # the role's instead.
@@ -29,7 +29,7 @@ SET log_transaction_sample_rate = 0; SET log_min_error_statement = 'panic'; SET 
 
 psql -X -v ON_ERROR_STOP=1 --dbname postgres -c 'ALTER ROLE postgres PASSWORD NULL'
 
-for db in psp payment orders; do
+for db in psp payment orders email; do
   psql -X -v ON_ERROR_STOP=1 --dbname postgres <<SQL
 $quiet
 \set owner_password \`cat $secrets/${db}-owner\`

@@ -1,0 +1,25 @@
+[project]
+name = "email-worker"
+version = "0.1.0"
+description = "Sends LabFlow's customer emails."
+requires-python = ">=3.14"
+dependencies = ["jinja2>=3.1", "labflow"]
+
+# Every Python service's command is `service`, as /service is every Go one's.
+[project.scripts]
+service = "email_worker.__main__:run"
+
+[tool.uv.sources]
+labflow = { path = "../../libs/python", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Empty on purpose: it makes this file Ruff's configuration root, so Ruff
+# groups this package's imports alike from any directory. The rules stay
+# Ruff's defaults.
+[tool.ruff]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

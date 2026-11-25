@@ -1,1 +1,9 @@
+# Development tools; packages they share with the services and the build
+# backend are constrained to those pins.
+black
+cryptography
 pre-commit==4.7.0
+pylint
+pytest
+ruff
+testcontainers

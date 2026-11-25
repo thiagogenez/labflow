@@ -111,3 +111,28 @@ repos:
         language: docker_image
         entry: hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d hadolint
         types: [dockerfile]
+
+  # Python tools run from the .venv that make setup installs from
+  # requirements-dev.txt, so the editor, the hook and CI run the same versions:
+  # Ruff and Black with their upstream defaults, and Pylint from each package's
+  # directory (scripts/lint_python_packages.sh).
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff
+        language: system
+        entry: .venv/bin/ruff check --force-exclude
+        types_or: [python, pyi]
+        require_serial: true
+      - id: black
+        name: black
+        language: system
+        entry: .venv/bin/black
+        types_or: [python, pyi]
+        require_serial: true
+      - id: pylint
+        name: pylint in every Python package
+        language: system
+        entry: scripts/lint_python_packages.sh
+        types_or: [python, toml]
+        pass_filenames: false

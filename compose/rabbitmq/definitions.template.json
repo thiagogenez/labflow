@@ -1,12 +1,14 @@
 {
   "users": [
     { "name": "admin", "password": "@admin@", "tags": ["administrator"] },
-    { "name": "order-api", "password": "@order-api@", "tags": [] }
+    { "name": "order-api", "password": "@order-api@", "tags": [] },
+    { "name": "email-worker", "password": "@email-worker@", "tags": [] }
   ],
   "vhosts": [{ "name": "labflow" }],
   "permissions": [
     { "user": "admin", "vhost": "labflow", "configure": ".*", "write": ".*", "read": ".*" },
-    { "user": "order-api", "vhost": "labflow", "configure": "^$", "write": "^labflow\\.events$", "read": "^$" }
+    { "user": "order-api", "vhost": "labflow", "configure": "^$", "write": "^labflow\\.events$", "read": "^$" },
+    { "user": "email-worker", "vhost": "labflow", "configure": "^$", "write": "^$", "read": "^email-worker$" }
   ],
   "topic_permissions": [
     { "user": "order-api", "vhost": "labflow", "exchange": "labflow.events", "write": "^labflow\\.order\\.", "read": "^$" }
