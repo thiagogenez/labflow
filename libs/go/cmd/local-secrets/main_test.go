@@ -1,12 +1,14 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newRoot copies the real definitions template, with an extra user whose name
@@ -182,6 +184,16 @@ func TestFailureKeepsThePreviousSet(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
+		{"an unreadable TLS key", false, func(t *testing.T, root string) {
+			if err := os.Chmod(filepath.Join(root, ".secrets", "mailpit-tls.key"), 0o000); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a Mailpit password that would add a user", false, func(t *testing.T, root string) {
+			if err := os.WriteFile(filepath.Join(root, ".secrets", "mailpit-ui"), []byte(strings.Repeat("p", 40)+"\nroot:x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
 		{"a password JSON would need to escape", false, func(t *testing.T, root string) {
 			if err := os.WriteFile(filepath.Join(root, ".secrets", "rabbitmq-admin"), []byte(`a"b`+strings.Repeat("c", 40)), 0o644); err != nil {
 				t.Fatal(err)
@@ -245,5 +257,54 @@ func TestManualChangeGetsANewGeneration(t *testing.T) {
 	}
 	if snapshot(t, root)["generation"] == "" {
 		t.Error("a deleted generation was not written again")
+	}
+}
+
+// Mailpit gets a password file per service from the passwords, and a
+// certificate for its name that is kept until 30 days before it expires.
+func TestMailpitFiles(t *testing.T) {
+	root := newRoot(t)
+	if err := run(root, false); err != nil {
+		t.Fatal(err)
+	}
+	got := snapshot(t, root)
+	if got["mailpit-smtp-users"] != "email-worker:"+got["mailpit-email-worker"]+"\n" ||
+		got["mailpit-ui-users"] != "admin:"+got["mailpit-ui"]+"\n" {
+		t.Error("a Mailpit password file does not hold its user's password")
+	}
+	pair, err := tls.X509KeyPair([]byte(got["mailpit-tls.crt"]), []byte(got["mailpit-tls.key"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left := time.Until(pair.Leaf.NotAfter); pair.Leaf.VerifyHostname("mailpit") != nil || left < 364*24*time.Hour {
+		t.Errorf("certificate for %v, %s left; want mailpit, a year", pair.Leaf.DNSNames, left)
+	}
+
+	if err := run(root, false); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot(t, root)["mailpit-tls.crt"] != got["mailpit-tls.crt"] {
+		t.Error("a second run replaced a certificate with a year left")
+	}
+
+	// A certificate with 29 days left is replaced, with its key.
+	key, cert, err := newTLSPair(time.Now().Add(29*24*time.Hour - tlsLifetime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string][]byte{"mailpit-tls.key": key, "mailpit-tls.crt": cert} {
+		if err := os.WriteFile(filepath.Join(root, ".secrets", name), content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := run(root, false); err != nil {
+		t.Fatal(err)
+	}
+	renewed := snapshot(t, root)
+	if renewed["mailpit-tls.crt"] == string(cert) || renewed["mailpit-tls.key"] == string(key) {
+		t.Error("a certificate with 29 days left was kept")
+	}
+	if renewed["generation"] == got["generation"] {
+		t.Error("a renewed certificate kept the generation, so Compose would not recreate Mailpit")
 	}
 }

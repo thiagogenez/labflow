@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<body>
+<p>Hello {{ first_name }},</p>
+<p>thank you for your order. We have received your payment and will let you know when it ships.</p>
+<table>
+{% for line in lines %}
+<tr><td>{{ line.quantity }} &times; {{ line.name }}</td><td>{{ line.gross_amount | euros }}</td></tr>
+{% endfor %}
+<tr><td>Shipping</td><td>{{ shipping | euros }}</td></tr>
+<tr><td><strong>Total</strong> (VAT included)</td><td><strong>{{ total | euros }}</strong></td></tr>
+</table>
+<p><a href="{{ link }}">See your order</a> at any time.</p>
+<p>LabFlow</p>
+</body>
+</html>

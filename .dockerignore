@@ -1,6 +1,10 @@
-# The Go build context is the repository root; send only what images need.
+# The build context is the repository root; send only what images need.
 *
 !libs/go/
+!libs/python/
 !services/
+!requirements-build.txt
 **/*_test.go
+**/tests/
+**/__pycache__/
 **/.env*

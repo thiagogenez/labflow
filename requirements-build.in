@@ -1,0 +1,4 @@
+# The build backend of the Python packages in this repository, installed
+# without build isolation so it is hash-checked like every other dependency.
+editables
+hatchling

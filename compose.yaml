@@ -1,5 +1,6 @@
 # Local development environment: docker compose up --build
-# psp-simulator stands in for an external card payment provider.
+# psp-simulator stands in for an external card payment provider, and Mailpit
+# for an email provider.
 name: labflow
 
 x-go-build: &go-build
@@ -36,10 +37,18 @@ secrets:
   payment-app: { file: ./.secrets/payment-app }
   orders-owner: { file: ./.secrets/orders-owner }
   orders-app: { file: ./.secrets/orders-app }
+  email-owner: { file: ./.secrets/email-owner }
+  email-app: { file: ./.secrets/email-app }
   psp-secret-key: { file: ./.secrets/psp-secret-key }
   order-token-key: { file: ./.secrets/order-token-key }
   rabbitmq-order-api: { file: ./.secrets/rabbitmq-order-api }
+  rabbitmq-email-worker: { file: ./.secrets/rabbitmq-email-worker }
   rabbitmq-definitions.json: { file: ./.secrets/rabbitmq-definitions.json }
+  mailpit-email-worker: { file: ./.secrets/mailpit-email-worker }
+  mailpit-smtp-users: { file: ./.secrets/mailpit-smtp-users }
+  mailpit-ui-users: { file: ./.secrets/mailpit-ui-users }
+  mailpit-tls.crt: { file: ./.secrets/mailpit-tls.crt }
+  mailpit-tls.key: { file: ./.secrets/mailpit-tls.key }
 
 services:
   postgres:
@@ -65,7 +74,7 @@ services:
     user: postgres
     entrypoint: ["bash", "/provision.sh"]
     labels: *secrets-generation
-    secrets: [psp-owner, psp-app, payment-owner, payment-app, orders-owner, orders-app]
+    secrets: [psp-owner, psp-app, payment-owner, payment-app, orders-owner, orders-app, email-owner, email-app]
     volumes:
       - ./compose/postgres/provision.sh:/provision.sh:ro
       # The server's Unix socket, which it trusts: whatever mounts it is the
@@ -96,6 +105,37 @@ services:
       interval: 5s
       timeout: 5s
       retries: 24
+
+  # Mailpit stands in for an email provider (D69). It relays and forwards
+  # nothing, keeps emails in memory only, and needs a login for SMTP, over
+  # STARTTLS only, and for its web interface, whose inbox holds order links.
+  # Chaos lets a drill make it refuse emails; only a logged-in user can set it.
+  mailpit:
+    <<: *hardening
+    image: axllent/mailpit:v1.34.0@sha256:23a2ef85bc50853ab3093645d1d64679afd8887e89da5e48a88940c172591a4e
+    user: "65534:65534" # the image would run as root
+    environment:
+      MP_SMTP_AUTH_FILE: /run/secrets/mailpit-smtp-users
+      MP_SMTP_TLS_CERT: /run/secrets/mailpit-tls.crt
+      MP_SMTP_TLS_KEY: /run/secrets/mailpit-tls.key
+      MP_SMTP_REQUIRE_STARTTLS: "true"
+      MP_UI_AUTH_FILE: /run/secrets/mailpit-ui-users
+      MP_MAX_AGE: 7d # the inbox holds personal data and order links (D64)
+      MP_ENABLE_CHAOS: "true"
+      # No lookups or requests leave the lab.
+      MP_SMTP_DISABLE_RDNS: "true"
+      MP_DISABLE_VERSION_CHECK: "true"
+    labels: *secrets-generation
+    secrets: [mailpit-smtp-users, mailpit-ui-users, mailpit-tls.crt, mailpit-tls.key]
+    # Its database is a temporary file: in memory, it ends with the container.
+    tmpfs: [/tmp]
+    ports:
+      - "127.0.0.1:8025:8025" # web interface
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
   jaeger:
     image: jaegertracing/jaeger:2.23.0@sha256:3823829974ccfc2485d2e48b165579091f32295022ae80ca49704e2f4834116e
@@ -238,6 +278,54 @@ services:
       # Started, not healthy: checkout works without the broker, and the
       # outbox relay retries until RabbitMQ answers.
       rabbitmq: { condition: service_started }
+
+  email-worker-migrate:
+    <<: *hardening
+    image: labflow/email-worker-migrations:local
+    build:
+      context: .
+      dockerfile: services/migrations.Dockerfile
+      args: { SERVICE: email-worker }
+    environment:
+      MIGRATIONS_DATABASE_URL: postgres://email_owner@postgres:5432/email?sslmode=disable
+      MIGRATIONS_DATABASE_PASSWORD_FILE: /run/secrets/email-owner
+    labels: *secrets-generation
+    secrets: [email-owner]
+    depends_on:
+      postgres-provision: { condition: service_completed_successfully }
+
+  email-worker:
+    <<: *hardening
+    image: labflow/email-worker:local
+    # Holds pika's close, which may spend the consumer's 45-second budget
+    # twice for the email in hand to finish, then the sweep and the spans.
+    stop_grace_period: 105s
+    build:
+      context: .
+      dockerfile: services/python.Dockerfile
+      args: { SERVICE: email-worker }
+    environment:
+      <<: *telemetry
+      DATABASE_URL: postgres://email_app@postgres:5432/email?sslmode=disable
+      DATABASE_PASSWORD_FILE: /run/secrets/email-app
+      BROKER: rabbitmq
+      RABBITMQ_URL: amqp://email-worker@rabbitmq:5672/labflow
+      RABBITMQ_PASSWORD_FILE: /run/secrets/rabbitmq-email-worker
+      SMTP_ADDR: mailpit:1025
+      SMTP_USER: email-worker
+      SMTP_PASSWORD_FILE: /run/secrets/mailpit-email-worker
+      SMTP_CA_FILE: /run/secrets/mailpit-tls.crt
+      # The storefront's order page, published on this port in a later change.
+      ORDER_PAGE_URL: http://localhost:8080/orders/
+      ORDER_TOKEN_KEY_FILE: /run/secrets/order-token-key
+    labels: *secrets-generation
+    secrets: [email-app, rabbitmq-email-worker, mailpit-email-worker, mailpit-tls.crt, order-token-key]
+    healthcheck: *healthcheck
+    depends_on:
+      email-worker-migrate: { condition: service_completed_successfully }
+      # Started, not healthy: the worker holds its messages until both answer.
+      rabbitmq: { condition: service_started }
+      mailpit: { condition: service_started }
 
 volumes:
   postgres-data:
